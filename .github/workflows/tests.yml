@@ -1,0 +1,36 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: polyscour
+
+      # PolyScour depends on the shared substrate. Pinned to the revision
+      # PolyScour declares support for, not to whatever is on master -- see
+      # ../PolyBedrock/docs/adr/0001.
+      - uses: actions/checkout@v4
+        with:
+          repository: xaerogonzo/PolyBedrock
+          ref: master
+          path: polybedrock
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e polybedrock/core -e polybedrock/ui
+          pip install -e polyscour[dev]
+
+      - name: Tests
+        working-directory: polyscour
+        run: python -m pytest -q

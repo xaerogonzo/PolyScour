@@ -1,0 +1,23 @@
+{
+  "id": "crash-dumps",
+  "name": "Application crash dumps",
+  "category": "Diagnostics",
+  "risk": "moderate",
+  "root_families": [
+    "crash_dumps"
+  ],
+  "patterns": [
+    "*.dmp",
+    "*.hdmp",
+    "*.mdmp"
+  ],
+  "min_age_days": 7,
+  "expected_scope": "one_directory",
+  "description": "Memory dumps written when an application crashed. Not regenerable, and occasionally still wanted, so these are moved to the vault rather than deleted.",
+  "limits": {
+    "max_candidates": 5000,
+    "max_depth": 2
+  },
+  "conditions": [],
+  "requires_elevation": false
+}

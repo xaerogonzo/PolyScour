@@ -1,0 +1,22 @@
+{
+  "id": "thumbnail-cache",
+  "name": "Explorer thumbnail cache",
+  "category": "Cache",
+  "risk": "safe",
+  "root_families": [
+    "thumbnail_cache"
+  ],
+  "patterns": [
+    "thumbcache_*.db",
+    "iconcache_*.db"
+  ],
+  "min_age_days": 0,
+  "expected_scope": "files_only",
+  "description": "Explorer's thumbnail and icon databases. Windows rebuilds them the next time you browse a folder.",
+  "limits": {
+    "max_candidates": 2000,
+    "max_depth": 1
+  },
+  "conditions": [],
+  "requires_elevation": false
+}

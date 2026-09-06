@@ -1,0 +1,20 @@
+{
+  "id": "windows-temp",
+  "name": "Windows temporary files",
+  "category": "Temporary files",
+  "risk": "low",
+  "root_families": [
+    "windows_temp"
+  ],
+  "patterns": [
+    "*"
+  ],
+  "min_age_days": 7,
+  "expected_scope": "system_cache",
+  "requires_elevation": true,
+  "description": "Files under the Windows TEMP folder. Most need administrator rights; PolyScour reports what it had to skip rather than asking to elevate.",
+  "limits": {
+    "max_candidates": 200000
+  },
+  "conditions": []
+}

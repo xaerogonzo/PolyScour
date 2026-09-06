@@ -1,0 +1,22 @@
+{
+  "id": "firefox-cache",
+  "name": "Mozilla Firefox cache",
+  "category": "Browser",
+  "risk": "safe",
+  "root_families": [
+    "browser_cache_firefox"
+  ],
+  "patterns": [
+    "*"
+  ],
+  "conditions": [
+    "firefox_not_running"
+  ],
+  "min_age_days": 0,
+  "expected_scope": "entire_user_cache",
+  "description": "Firefox's cache2 store, for every profile. Rebuilt as you browse. Cookies, history and saved passwords are NOT touched.",
+  "limits": {
+    "max_candidates": 200000
+  },
+  "requires_elevation": false
+}

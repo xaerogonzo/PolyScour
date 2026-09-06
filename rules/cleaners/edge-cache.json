@@ -1,0 +1,22 @@
+{
+  "id": "edge-cache",
+  "name": "Microsoft Edge cache",
+  "category": "Browser",
+  "risk": "safe",
+  "root_families": [
+    "browser_cache_edge"
+  ],
+  "patterns": [
+    "*"
+  ],
+  "conditions": [
+    "edge_not_running"
+  ],
+  "min_age_days": 0,
+  "expected_scope": "entire_user_cache",
+  "description": "Edge's on-disk page cache, for every profile. Rebuilt as you browse. Cookies, history and saved passwords are NOT touched.",
+  "limits": {
+    "max_candidates": 200000
+  },
+  "requires_elevation": false
+}

@@ -1,0 +1,20 @@
+{
+  "id": "directx-shader-cache",
+  "name": "DirectX shader cache",
+  "category": "Cache",
+  "risk": "safe",
+  "root_families": [
+    "shader_cache"
+  ],
+  "patterns": [
+    "*"
+  ],
+  "min_age_days": 0,
+  "expected_scope": "entire_user_cache",
+  "description": "Compiled GPU shaders cached by DirectX and by NVIDIA/AMD drivers. Regenerated on demand; the first launch of a game may be slightly slower afterwards.",
+  "limits": {
+    "max_candidates": 100000
+  },
+  "conditions": [],
+  "requires_elevation": false
+}

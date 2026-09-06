@@ -1,0 +1,20 @@
+{
+  "id": "user-temp",
+  "name": "User temporary files",
+  "category": "Temporary files",
+  "risk": "low",
+  "root_families": [
+    "user_temp"
+  ],
+  "patterns": [
+    "*"
+  ],
+  "min_age_days": 1,
+  "expected_scope": "one_directory",
+  "description": "Files applications wrote to your TEMP folder and did not clean up. Nothing is expected to survive here across a reboot.",
+  "limits": {
+    "max_candidates": 200000
+  },
+  "conditions": [],
+  "requires_elevation": false
+}
