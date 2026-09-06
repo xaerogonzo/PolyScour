@@ -16,3 +16,5 @@ artifacts/
 .tokensave/
 .claude/
 .mcp.json
+BASIC_INSTRUCTIONS.md
+.codegraph/
