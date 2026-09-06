@@ -1,29 +1,63 @@
 name: tests
 
+# push and pull_request run the SAME job with the SAME conditions, on purpose.
+# Splitting them (a lenient job on push, a strict one on PRs, or `if:` guards on
+# either) is how a repo ends up with a green push run sitting on top of a red
+# pull_request run. If it is worth gating, gate it everywhere.
 on:
   push:
+    branches: [master]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
+    # Windows only, and not a portability compromise: the product is Windows
+    # only. The suite touches Win32 desktops, reparse points and Tk.
     runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of the supported range. pyproject.toml claims >=3.11, so
+        # 3.13 is promised to users and needs to be exercised somewhere other
+        # than their machines.
+        python-version: ["3.11", "3.13"]
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: polyscour
 
-      # PolyScour depends on the shared substrate. Pinned to the revision
-      # PolyScour declares support for, not to whatever is on master -- see
-      # ../PolyBedrock/docs/adr/0001.
-      - uses: actions/checkout@v4
+      # PolyScour depends on the shared substrate.
+      #
+      # NOT YET PINNED, and this comment says so rather than claiming
+      # otherwise: PolyBedrock carries no tags, so there is no supported
+      # revision to name yet. `master` here means this job proves PolyScour
+      # works against whatever the substrate looks like today -- which is
+      # useful, but it is not a compatibility guarantee, and master-vs-master
+      # can go green for a pair of changes that would not work against any
+      # released version of either. Pinning is tracked with the versioning
+      # policy in ../PolyBedrock/docs/adr/0001; `polybedrock-core>=0.1` in
+      # pyproject.toml needs a real upper bound at the same time.
+      - uses: actions/checkout@v7
         with:
           repository: xaerogonzo/PolyBedrock
           ref: master
           path: polybedrock
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: polyscour/pyproject.toml
 
       - name: Install
         run: |
@@ -31,6 +65,48 @@ jobs:
           pip install -e polybedrock/core -e polybedrock/ui
           pip install -e polyscour[dev]
 
+      - name: Report the environment
+        # Cheap, and it is the first thing worth knowing when a Windows-only
+        # GUI suite behaves differently here than it does locally. --probe
+        # reports whether this runner can host a hidden desktop at all; the
+        # capture tests skip rather than fail when it cannot.
+        working-directory: polyscour
+        run: |
+          python -c "import sys; print(sys.version)"
+          python -c "import platform; print(platform.platform())"
+          python tools\uishot\__main__.py --probe
+        continue-on-error: true
+
       - name: Tests
         working-directory: polyscour
-        run: python -m pytest -q
+        env:
+          PYTHONIOENCODING: utf-8
+        # Golden-image drift is deliberately NOT gated here, matching
+        # PolyShield. The committed PNGs in tests/golden/ui encode one
+        # developer's font rasterisation and DPI, and a runner differs for
+        # reasons that say nothing about the code -- GitHub rebuilds the image
+        # roughly monthly. tests/test_uishot.py skips that one comparison when
+        # CI is set and explains why.
+        #
+        # This is not drift detection switched off. The portable half still
+        # runs here: recording a golden, comparing against it, and -- the part
+        # that matters -- confirming a corrupted golden is actually *caught*.
+        # A comparator that silently stopped detecting anything would fail
+        # that test rather than reporting "all match" over nothing.
+        run: python -m pytest -q -rs
+
+      # On a failure, capture the views from the runner itself. Without this
+      # there is nothing to look at when a GUI test fails on a machine you
+      # cannot open.
+      - name: Capture views for diagnosis
+        if: failure()
+        working-directory: polyscour
+        run: python tools\uishot\__main__.py
+        continue-on-error: true
+
+      - name: Upload captures
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-captures-py${{ matrix.python-version }}
+          path: polyscour/artifacts/ui/

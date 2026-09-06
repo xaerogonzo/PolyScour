@@ -9,6 +9,7 @@ the thing that actually gets invoked.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -141,8 +142,75 @@ def test_a_capture_is_not_blank(capture_supported, tmp_path):
         "capture is nearly uniform — the window probably did not paint"
 
 
+def test_check_passes_against_a_freshly_recorded_golden(capture_supported, tmp_path):
+    """The portable half of drift detection: record, then compare.
+
+    Records a golden into a temp directory on *this* machine and immediately
+    checks against it, so it asserts the mechanism rather than one developer's
+    font rasterisation. This is what keeps running on a CI runner after the
+    committed-golden comparison below is skipped there.
+    """
+    out, golden = tmp_path / "shots", tmp_path / "golden"
+
+    record = _run("--only", "clean", "--out", str(out),
+                  "--golden", str(golden), "--update-golden")
+    assert record.returncode == 0, record.stderr
+    assert (golden / "clean_findings.png").exists()
+
+    check = _run("--only", "clean", "--out", str(out),
+                 "--golden", str(golden), "--check")
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert "match golden" in check.stdout
+
+
+def test_check_reports_drift_and_writes_a_side_by_side(capture_supported, tmp_path):
+    """The negative control, and the reason the skip below is safe.
+
+    A comparison that has never been seen to fail is an assumption. Without
+    this, skipping the committed-golden test off-machine would leave CI unable
+    to notice that ``--check`` had stopped detecting anything at all — it would
+    report "all match" over a broken comparator and look exactly like success.
+    """
+    from PIL import Image
+
+    out, golden = tmp_path / "shots", tmp_path / "golden"
+    assert _run("--only", "clean", "--out", str(out),
+                "--golden", str(golden), "--update-golden").returncode == 0
+
+    # Corrupt the golden so the next check has something it must notice.
+    ref = Image.open(golden / "clean_findings.png").copy()
+    for x in range(300):
+        for y in range(200):
+            ref.putpixel((x, y), (255, 0, 255))
+    ref.save(golden / "clean_findings.png")
+
+    check = _run("--only", "clean", "--out", str(out),
+                 "--golden", str(golden), "--check")
+    assert check.returncode == 1
+    assert "DRIFT" in check.stdout
+    assert (out / "diff" / "clean_findings.png").exists()
+
+
+@pytest.mark.skipif(
+    bool(os.environ.get("CI")) and not os.environ.get("POLYSCOUR_GOLDEN_GATE"),
+    reason="golden PNGs encode this machine's font rasterisation and DPI; "
+           "set POLYSCOUR_GOLDEN_GATE=1 to force the comparison")
 def test_check_passes_against_the_recorded_goldens(capture_supported):
-    """Drift detection, run for real. Failing here means the UI changed."""
+    """Drift detection against the committed goldens. Local gate, not a CI gate.
+
+    Deliberately **not** gated on a foreign runner, following the reasoning
+    PolyShield already records in its own workflow: the reference PNGs embed
+    this developer's font rasterisation and DPI, and a runner differs for
+    reasons that say nothing about the code. GitHub's runner image is rebuilt
+    roughly monthly, so committing a second set for it would gate merges on
+    someone else's font stack.
+
+    This is not the same as switching drift detection off. The two tests above
+    still run everywhere and still prove that recording, comparing and *failing*
+    all work; what is skipped is only the machine-specific baseline. Run
+    ``tools/uishot/__main__.py --check`` locally before committing UI changes —
+    that is where this comparison is meaningful.
+    """
     result = _run("--check")
     assert result.returncode == 0, (
         "UI drifted from tests/golden/ui — inspect the side-by-side diffs in "

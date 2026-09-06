@@ -98,6 +98,15 @@ golden=False)` marks a scene whose content is live and therefore not comparable
 The harness redirects `POLYSCOUR_DATA_DIR` to a temp directory before importing
 anything, so a capture never touches the real vault or ledger.
 
+**`--check` against the committed goldens is a local gate and must stay one.**
+`tests/test_uishot.py::test_check_passes_against_the_recorded_goldens` skips
+when `CI` is set, because the PNGs encode this machine's font rasterisation and
+DPI. That skip is deliberate — do not "fix" it by committing runner goldens or
+by loosening the tolerance; a tolerance wide enough for cross-machine fonts is
+wide enough to miss a moved button. The portable half still runs everywhere:
+record-into-tmp, compare, and a negative control proving a corrupted golden is
+actually caught. Set `POLYSCOUR_GOLDEN_GATE=1` to force the comparison anyway.
+
 ## Documentation files
 
 | File | Covers |
