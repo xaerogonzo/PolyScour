@@ -120,6 +120,43 @@ subsequent launch leaves processes frozen until reboot. A supervising process
 would fix it and is deferred to 0.2's elevated helper, where a second process
 gets a threat model written before its code — see `docs/THREAT_MODEL.md` T12.
 
+## The Startup Manager
+
+The second feature outside the cleaning pipeline, and the first that writes to
+the registry.
+
+```
+polybedrock.startup.iter_run_entries()   read: hive, key, value name
+        |
+   startup/manager.py     read the approval byte; classify the target
+        |
+   startup/policy.py      may this be changed?
+        |
+   startup/service.py     veto -> ledger record -> registry write
+```
+
+`policy` imports `manager` (for the record type), so the orchestration cannot
+live in either without making the pair circular — hence `service`.
+
+### Identity
+
+An entry is named by `hive \ key path \ value name`, never by position.
+Enumeration order is not guaranteed, so a stored index would point at a
+different entry after any change to the key. The identity is a readable string
+rather than a hash, so a ledger row remains legible a year later.
+
+### State
+
+`enabled` and `target` are separate facts, not one status. An entry can be
+disabled *and* have a missing file, and collapsing them would force a choice
+about which to show. `TargetState.UNRESOLVED` exists because a `Run` value whose
+command line cannot be parsed is common, and forcing it into present/missing
+would be inventing a fact.
+
+Absence of an approval record means **enabled** — that is Windows' default, and
+most entries never get a record. Orphan records (an approval naming a `Run`
+value that no longer exists) are excluded: they are not startup items, and
+listing them would offer a switch that governs nothing.
 ## Threading
 
 Tk is not thread-safe. One rule covers it:

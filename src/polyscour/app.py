@@ -45,6 +45,7 @@ _NAV = [
     ("dashboard", "Dashboard"),
     ("clean", "Clean"),
     ("game", "Game Mode"),
+    ("startup", "Startup"),
     ("history", "History"),
     ("settings", "Settings"),
 ]
@@ -157,11 +158,12 @@ class App(ctk.CTk):
     def _factory(self, key: str):
         from polyscour.views import (clean_view, dashboard_view,
                                       gamemode_view, history_view,
-                                      settings_view)
+                                      settings_view, startup_view)
         return {
             "dashboard": lambda: dashboard_view.DashboardView(self.content, self),
             "clean": lambda: clean_view.CleanView(self.content, self),
             "game": lambda: gamemode_view.GameModeView(self.content, self),
+            "startup": lambda: startup_view.StartupView(self.content, self),
             "history": lambda: history_view.HistoryView(self.content, self),
             "settings": lambda: settings_view.SettingsView(self.content, self),
         }[key]

@@ -159,6 +159,36 @@ and is deliberately not built in 0.1 — it would be PolyScour's first second
 process, and 0.2's elevated helper is where that gets a threat model written
 before the code.
 
+### T13 — A startup entry is changed to something the user did not intend
+
+**Mitigated.** PolyScour writes only the approval byte in
+`HKCU\...\StartupApproved\Run`; it never writes, renames or deletes a `Run`
+value. So the worst a bug here can do is switch something on or off — it cannot
+change *what* an entry launches, and it cannot destroy one.
+
+`startup/policy.py` refuses `HKLM` (every account, needs elevation), PolyScour's
+own entry, and unnamed entries. The veto runs again immediately before the
+write, because the list a user is looking at was built earlier and the registry
+is shared.
+
+**Undo is guarded against a substituted target.** Between a change and its undo,
+an installer can rewrite the `Run` value. Re-enabling it then would restore a
+decision nobody made, with PolyScour's name on it — so the `raw_value` recorded
+at change time is compared, and a mismatch refuses rather than writes.
+
+### T14 — The Startup Manager is used to make a machine less safe
+
+**Partially mitigated, and stated honestly.** A user can disable their own
+security software's user-scope autorun; PolyScour lists it like anything else.
+Two things limit the damage and one does not:
+
+- `HKLM` entries — where most security software registers — are refused outright.
+- Nothing is pre-selected and nothing is recommended, so a disable is always an
+  explicit act rather than a consequence of clicking *Apply*.
+- **Not mitigated:** a determined user can still switch off a user-scope entry.
+  That is the same authority they already have in Task Manager, and a
+  maintenance tool that silently refused would be lying about what it does.
+
 ## Non-goals
 
 PolyScour is not an antivirus and does not try to be. It can say an item is

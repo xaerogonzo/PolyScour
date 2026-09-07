@@ -23,7 +23,11 @@ This list is part of the product, not a disclaimer.
   kind of alarming-but-meaningless figure this project exists to replace.
 - **No forcing.** No closing other applications' file handles, no clearing
   read-only bits. A locked file is skipped, reported, and left alone.
-- **No silent registry edits.** Registry cleaning is not in 0.1 at all.
+- **No silent registry edits.** PolyScour writes to the registry in exactly
+  one place — the Startup Manager's approval byte, the same switch Task
+  Manager uses — and only when you flip it. Every such change names the key
+  and value, is recorded in History, and is undoable. Registry *cleaning* —
+  deleting keys because they look unused — is not in 0.1 and is not planned.
 - **No telemetry.** Not opt-in, not anonymous, not "just crash reports". None.
 - **No account, no cloud, no ads, no bundled software.**
 - **No claiming an undo that does not exist.** A regenerable cache is deleted
@@ -65,6 +69,27 @@ portable mode, Recycle Bin.
 
 The strongest part of this project is what it refuses to build. The shared
 substrate and one trustworthy cleaner come first.
+
+## Startup
+
+What Windows starts for you, and a switch for each one.
+
+Turning an entry off writes the same approval byte Task Manager writes, in
+`HKCU\...\Explorer\StartupApproved\Run`. **The `Run` value itself is never
+touched**, so nothing is deleted, Task Manager shows the same state, and you can
+turn it back on from either place. Machine-wide (`HKLM`) entries are listed but
+their switch is refused with the reason, because changing them needs
+administrator rights that 0.1 does not use.
+
+PolyScour does not suggest what to turn off, and there is no "recommended" set.
+Startup impact is usually small, and an entry you rarely use is not evidence
+that disabling it helps. An entry whose file is missing is described as exactly
+that, not as safe to remove — a missing target is very often an installer that
+will put the file back.
+
+Undo checks before it acts: if the entry now launches something different from
+what it launched when PolyScour changed it, the undo is refused and says so,
+rather than restoring a decision you never made.
 
 ## Game Mode
 

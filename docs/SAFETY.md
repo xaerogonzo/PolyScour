@@ -224,6 +224,49 @@ processes frozen until reboot. Closing that needs a supervising process, which
 is deliberately deferred to the elevated helper in 0.2 — where a second process
 gets a threat-model section written before its code.
 
+## 10. Startup entries: a third policy, and the first registry write
+
+The Startup Manager is the first feature that changes registry state, so it is
+worth being exact about what it writes:
+
+    HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run
+
+a `REG_BINARY` value per entry, named after the `Run` value it governs. Byte 0
+is `0x02` for enabled and `0x03` for disabled. **The `Run` value itself is never
+written, renamed or deleted.**
+
+That choice is the safety property. Using Windows' own switch means a disable is
+a *state transition* rather than a deletion: nothing is removed, Task Manager
+shows the same state, and a user who uninstalls PolyScour keeps everything. The
+alternative — delete the `Run` value and stash a copy — would make PolyScour the
+only thing that knows how to put it back.
+
+`startup/policy.py` is the authority, in the same shape as the other two:
+
+| Refusal | Why |
+|---|---|
+| `scope != "user"` | `HKLM` affects every account and needs rights 0.1 does not have |
+| PolyScour's own entry | A product that can switch off its own autorun can make itself unfindable |
+| An entry with no name | It cannot be addressed reliably, so it cannot be changed safely |
+
+Machine-wide entries are **listed and refused**, not hidden. Hiding them would
+make the screen a misleading account of what starts up; refusing with a reason
+tells the user something true.
+
+### Order, and what undo checks
+
+    veto  ->  record in the ledger  ->  write the registry
+
+Dying between the record and the write shows a change in History that did not
+happen — visible and correctable. The reverse order would alter the machine with
+nothing to say so.
+
+Undo compares the recorded `raw_value` against what the entry launches **now**.
+An installer rewriting a `Run` value between the change and the undo is
+ordinary, and re-enabling it anyway would restore a decision the user never
+made, using PolyScour to do it. A mismatch is reported and the record stays
+open.
+
 ## What is tested
 
 `tests/test_safety.py` and `tests/test_executor.py`, in full:

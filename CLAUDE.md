@@ -74,7 +74,11 @@ src/polyscour/
 │   └── executor.py   EXECUTE → VERIFY → LOG. The only code that removes things.
 ├── integrations/
 │   └── polyshield.py Optional, read-only, three commands, fails closed
-└── views/            dashboard, clean, gamemode, history, settings
+├── startup/
+│   ├── manager.py    Read Run keys + the StartupApproved byte; TargetState
+│   ├── policy.py     HKCU only, never ourselves — THE AUTHORITY for autoruns
+│   └── service.py    veto -> ledger -> registry, and the guarded undo
+└── views/            dashboard, clean, gamemode, startup, history, settings
 rules/cleaners/*.json  Data only. Never executable, never authority.
 tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.
