@@ -173,6 +173,57 @@ rehearsal runs the **full guard chain** — the point is to find out what would
 happen, including which items would be refused — and writes nothing. Asserted by
 snapshotting the tree before and after, not by trusting the flag.
 
+## 9. Game Mode: a second policy, for processes rather than paths
+
+Suspending a process is not a filesystem operation, so it does not run through
+the guard chain above. It gets its own authority in
+`polyscour/gamemode/policy.py`, built to the same rule: **the selection
+proposes, code disposes.** A list of ticked checkboxes is input, and input is
+untrusted — a row can be stale, a PID can be recycled between the scan and the
+click, and a user can tick `lsass.exe` because it was using memory.
+
+The veto is a reviewed denylist **plus structural rules**, and the structural
+rules are the ones that carry it:
+
+| Refusal | Covers |
+|---|---|
+| PID ≤ 4 | The kernel processes, by number — never depending on a name we may not be able to read |
+| Name on `NEVER_SUSPEND` | Named refusals: the shell, the audio graph, service hosts, security software, PolyScour and PolyShield |
+| Owner is not the current user | **Everything system-owned that nobody thought to name** |
+| Owner or name unreadable | Unknown behaves like dangerous, as it does in `scanner.condition_met` |
+| PID is PolyScour or its parent | Never freeze ourselves, or the terminal we were launched from |
+
+A denylist alone only refuses what somebody thought of. The ownership rule is
+what makes the policy hold against a process nobody has heard of.
+
+**The veto runs twice**, for the same reason `authorize()` does: once when the
+list is built, once inside `GameSession.suspend` immediately before the freeze.
+A PID recycled in between is exactly the race the second call is there to lose.
+
+### Why freezing is recorded before it happens
+
+`NtSuspendProcess` has no timeout and no owner. A suspended process stays
+suspended after the thing that suspended it is gone — it does not exit, and it
+presents to the user as an application that has hung for no reason.
+
+So the ledger row is written **before** the process is frozen, the same shape as
+a vault object existing before its delete:
+
+```
+record intent  ->  suspend  ->  (later) resume  ->  mark resumed
+```
+
+Dying between the record and the freeze costs one harmless resume on recovery.
+Dying between the freeze and the record — which this order makes impossible —
+would leave a frozen process nothing knows how to release. `Services.__init__`
+calls `gamemode.recover()` on every launch.
+
+**The residual gap is stated rather than hidden:** nothing resumes anything
+until PolyScour runs again. A hard kill with no subsequent launch leaves the
+processes frozen until reboot. Closing that needs a supervising process, which
+is deliberately deferred to the elevated helper in 0.2 — where a second process
+gets a threat-model section written before its code.
+
 ## What is tested
 
 `tests/test_safety.py` and `tests/test_executor.py`, in full:

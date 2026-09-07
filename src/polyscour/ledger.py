@@ -68,6 +68,29 @@ CREATE TABLE IF NOT EXISTS reversals (
 
 CREATE INDEX IF NOT EXISTS ix_reversals_op ON reversals(operation_id);
 
+-- One row per process Game Mode froze. Written BEFORE the suspension, for
+-- the same reason a vault object is written before the delete: if PolyScour
+-- dies between the two, the recoverable state is "we may have frozen this"
+-- rather than "something is frozen and nothing knows".
+--
+-- create_time is the PID-reuse guard. A PID is reused freely, so on recovery
+-- "resume 1234" may mean an unrelated process that started since. Resuming a
+-- process nobody suspended is a no-op, but it would be a no-op performed on a
+-- stranger, and the record would claim a repair that did not happen.
+CREATE TABLE IF NOT EXISTS suspensions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id     TEXT NOT NULL,
+    pid            INTEGER NOT NULL,
+    process_name   TEXT NOT NULL,
+    create_time    REAL NOT NULL,
+    suspended_at   TEXT NOT NULL,
+    resumed_at     TEXT,
+    resume_note    TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS ix_suspensions_open
+    ON suspensions(resumed_at) WHERE resumed_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS skips (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     operation_id   TEXT NOT NULL REFERENCES operations(operation_id),
@@ -138,6 +161,14 @@ class MutationLock:
             os.close(self._fd)
             self._fd = None
 
+
+def _now() -> str:
+    """UTC, ISO-8601 to the second — the spelling the other rows already use.
+
+    One spelling across the file so timestamps sort as text and compare
+    without parsing.
+    """
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 def new_operation_id() -> str:
     """Sortable by time, unique across processes."""
@@ -246,3 +277,46 @@ class Ledger:
                 (OperationOutcome.SUCCESS.value,
                  OperationOutcome.SUCCESS_WITH_SKIPS.value)).fetchone()
             return {"runs": row["runs"], "bytes_freed": row["bytes_freed"]}
+
+    # ── Game Mode suspensions ────────────────────────────────────────────
+    #
+    # Deliberately separate from `operations`. A cleaning run is a finished
+    # thing with an outcome; a suspension is a state the machine is currently
+    # in, and the question asked of it is "is anything still frozen?" rather
+    # than "what happened?".
+
+    def record_suspension(self, session_id: str, pid: int, name: str,
+                          create_time: float) -> int:
+        """Write the intent to freeze *pid*, and return the row id.
+
+        Called BEFORE the process is suspended. A row with no matching freeze
+        costs one harmless resume on recovery; a freeze with no row is a
+        process nothing knows how to release.
+        """
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO suspensions "
+                "(session_id, pid, process_name, create_time, suspended_at) "
+                "VALUES (?,?,?,?,?)",
+                (session_id, int(pid), name, float(create_time), _now()))
+            return int(cur.lastrowid)
+
+    def mark_resumed(self, row_id: int, note: str = "") -> None:
+        """Close one suspension. Idempotent: re-closing is not an error."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE suspensions SET resumed_at = ?, resume_note = ? "
+                "WHERE id = ? AND resumed_at IS NULL",
+                (_now(), note, int(row_id)))
+
+    def open_suspensions(self) -> list[sqlite3.Row]:
+        """Everything recorded as frozen and not recorded as released.
+
+        This is what a fresh launch reads. It is intentionally not filtered by
+        session: rows left by a *previous* PolyScour that died are precisely
+        the ones that need attention.
+        """
+        with self._conn() as conn:
+            return conn.execute(
+                "SELECT * FROM suspensions WHERE resumed_at IS NULL "
+                "ORDER BY id").fetchall()
