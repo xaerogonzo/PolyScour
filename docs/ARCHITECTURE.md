@@ -157,6 +157,58 @@ Absence of an approval record means **enabled** — that is Windows' default, an
 most entries never get a record. Orphan records (an approval naming a `Run`
 value that no longer exists) are excluded: they are not startup items, and
 listing them would offer a switch that governs nothing.
+## The elevated helper
+
+Specified in `docs/THREAT_MODEL.md` before it was written. The shape:
+
+```
+  PolyScour GUI (unelevated)
+        |  writes one request file, ShellExecute("runas")
+        v
+  helper.py (elevated)  --> re-runs the SAME guard chain --> acts --> exits
+        |  writes <request>.response beside it
+        v
+  GUI reads the result
+```
+
+### Why the GUI launches it rather than connecting to it
+
+There is no port and no pipe waiting to be claimed, so there is nothing for
+another process to impersonate. The response is advisory: a lying one can
+produce a wrong History entry, never a wrong privileged action.
+
+The request file is writable by the unelevated user, which makes it
+attacker-controlled input by construction. That is fine, and it is the reason
+the helper re-authorises everything rather than trusting what it reads.
+
+### Validation happens at privilege, not before it
+
+`helper.handle` runs `polyscour.safety.Guard.authorize` in its own process
+against the path as it exists at that moment. This is the same reasoning that
+already makes `authorize()` run twice inside the unelevated app, taken one step
+further: different time, different process, **different privilege level**, and
+only the last one is the security boundary. The GUI's check keeps bad requests
+off the wire; it proves nothing.
+
+The helper also refuses directories outright. A recursive delete at
+administrator privilege driven by a caller-supplied path is the most dangerous
+thing it could offer, and nothing needs it — the executor sends individual files.
+
+### Nothing asks for elevation on its own
+
+`Executor(allow_elevation=False)` is the default and has no path to the helper.
+A caller sets it only after a person has agreed, which is what keeps
+`docs/THREAT_MODEL.md`'s "never requested speculatively" true rather than
+aspirational. Only `SkipReason.PERMISSION` is retried; every other failure is
+recorded as it was.
+
+### Still deferred
+
+`docs/adr/0001-vault-location.md` moves the vault to `%ProgramData%\PolyScour`
+"in 0.2, alongside the installer and the elevated helper". The helper now
+exists; the installer does not, and moving the vault to a machine-wide location
+without one would leave it somewhere an unelevated PolyScour cannot write. It
+stays where it is until the installer lands.
 ## Threading
 
 Tk is not thread-safe. One rule covers it:

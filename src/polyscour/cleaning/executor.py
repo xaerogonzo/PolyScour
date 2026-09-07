@@ -62,10 +62,16 @@ def _classify_os_error(exc: OSError) -> tuple[SkipReason, str]:
 
 class Executor:
     def __init__(self, vault: Vault, ledger: Ledger,
-                 guard: Guard | None = None) -> None:
+                 guard: Guard | None = None,
+                 allow_elevation: bool = False) -> None:
         self.vault = vault
         self.ledger = ledger
         self.guard = guard or Guard()
+        #: Off unless a caller explicitly turns it on, and a caller should only
+        #: do that after a person has agreed to it. docs/THREAT_MODEL.md is
+        #: explicit that elevation is never requested speculatively, so an
+        #: Executor built the ordinary way can never raise a UAC prompt.
+        self.allow_elevation = allow_elevation
 
     def execute(self, plan: ActionPlan,
                 cancel: threading.Event | None = None) -> ActionResult:
@@ -160,6 +166,17 @@ class Executor:
                 continue
             except OSError as exc:
                 reason, detail = _classify_os_error(exc)
+                if reason is SkipReason.PERMISSION and self.allow_elevation:
+                    # Only this one class of failure, and only when a person
+                    # has already agreed. Note what is NOT passed to the
+                    # helper: no decision, no approval, no "the guard said yes"
+                    # -- just the rule and the path, which it re-authorises for
+                    # itself at privilege.
+                    size = self._remove_elevated(finding.rule_id, approved)
+                    if size is not None:
+                        completed += 1
+                        bytes_ += size
+                        continue
                 skips.append(Skip(approved, reason, detail))
                 continue
 
@@ -184,6 +201,29 @@ class Executor:
     def _authorise(self, finding) -> Path:
         operation = next(iter(entry_for(finding.rule_id).operations))
         return self.guard.authorize(finding.rule_id, finding.path, operation)
+
+    def _remove_elevated(self, rule_id: str, path: Path) -> "int | None":
+        """Ask the elevated helper to delete one file. None if it did not.
+
+        The size is read *before* asking, because after a successful delete
+        there is nothing left to measure -- and reporting zero bytes freed for
+        a file that was removed would understate the result.
+
+        Every failure returns None so the caller records the original
+        permission skip: a user who declined the UAC prompt should see "needs
+        administrator rights", not a second, stranger error.
+        """
+        from polyscour.elevation.client import request
+        from polyscour.elevation.protocol import Operation as ElevOp
+
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return None
+
+        response = request(ElevOp.DELETE_APPROVED_PATH,
+                           rule_id=rule_id, path=str(path))
+        return size if response.ok else None
 
     @staticmethod
     def _remove(path: Path) -> int:
