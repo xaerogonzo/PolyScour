@@ -88,6 +88,15 @@ Captures every screen to `artifacts/ui/` and diffs it against the recorded look
 in `tests/golden/ui/`. Nothing appears on screen, nothing takes focus, and the
 mouse is never touched — the window is rendered on a hidden Windows desktop.
 
+**This comparison is a local gate, not a CI gate.** The golden PNGs encode one
+machine's font rasterisation and DPI, so a GitHub runner differs from them for
+reasons that say nothing about the code — and its image is rebuilt roughly
+monthly. CI therefore skips that one comparison and says so, while still
+proving the mechanism works there: it records a golden, compares against it,
+and confirms that a deliberately corrupted golden is actually *caught*. Run
+`--check` yourself before committing a UI change; that is where it means
+something.
+
 ## Optional: PolyShield
 
 If [PolyShield](https://github.com/xaerogonzo/Polyshield-Antivirus) is installed
