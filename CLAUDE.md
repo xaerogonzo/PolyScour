@@ -74,6 +74,10 @@ src/polyscour/
 │   └── executor.py   EXECUTE → VERIFY → LOG. The only code that removes things.
 ├── integrations/
 │   └── polyshield.py Optional, read-only, three commands, fails closed
+├── elevation/
+│   ├── protocol.py   The CLOSED operation set + shape validation (not authz)
+│   ├── helper.py     Runs elevated. Re-runs the guard. Assumes the GUI lies
+│   └── client.py     ShellExecute("runas"), one prompt per operation
 ├── startup/
 │   ├── manager.py    Read Run keys + the StartupApproved byte; TargetState
 │   ├── policy.py     HKCU only, never ourselves — THE AUTHORITY for autoruns

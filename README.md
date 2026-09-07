@@ -70,6 +70,22 @@ portable mode, Recycle Bin.
 The strongest part of this project is what it refuses to build. The shared
 substrate and one trustworthy cleaner come first.
 
+## Administrator rights
+
+Some work needs them: clearing `C:\Windows\Temp`, and machine-wide startup
+entries. PolyScour 0.1 skipped both and said so. It can now ask.
+
+**It asks per operation, and never on its own.** There is no service, nothing
+stays elevated, and no screen requests rights "in advance" — you see a prompt
+when you have asked for something that needs one.
+
+The elevated part is deliberately small: a closed list of named operations, no
+"run this command" of any kind, and it re-checks every path against the same
+safety rules the main application uses rather than trusting what it was handed.
+It assumes the program that asked it might be wrong. `docs/THREAT_MODEL.md`
+sets out what that does and does not protect you from — including the two cases
+it cannot.
+
 ## Startup
 
 What Windows starts for you, and a switch for each one.
