@@ -30,6 +30,8 @@ written down, with each item marked honestly.
     │
     ▼
   PolyScour GUI ── unelevated in 0.1, no service, no helper
+    │              (0.2 adds an elevated helper — see its section below;
+    │               it treats THIS process as untrusted)
     │
     ├── rules/*.json ......... DATA. Untrusted. Cannot grant authority.
     ├── safety/policy.py ..... CODE. Trusted. Ships in the build, reviewed.
@@ -124,9 +126,10 @@ A second process is told to try again rather than queued.
 ### T10 — Elevation is abused
 
 **Not applicable in 0.1.** PolyScour runs entirely unelevated and skips
-anything needing admin, reporting it plainly. When the elevated helper arrives
-in 0.2 it gets its own section here *before* it is written, with a deliberately
-narrow API and no `ExecuteCommand(string)`.
+anything needing admin, reporting it plainly. The helper's own section is
+below — written before the helper exists, as this entry required, and it is a
+specification the implementation has to satisfy rather than a description of
+something already built.
 
 ### T11 — Game Mode is aimed at a process that must not be frozen
 
@@ -188,6 +191,131 @@ Two things limit the damage and one does not:
 - **Not mitigated:** a determined user can still switch off a user-scope entry.
   That is the same authority they already have in Task Manager, and a
   maintenance tool that silently refused would be lying about what it does.
+
+## The elevated helper
+
+*Written before the helper exists, as T10 required. What follows is a
+specification the implementation has to satisfy, not a description of
+something already built.*
+
+PolyScour 0.1 runs entirely unelevated and skips whatever needs administrator
+rights — the `windows-temp` rule ships and is always reported as skipped, and
+machine-wide startup entries are listed and refused. Doing that work needs a
+process running as administrator, and introducing one is the largest single
+change to this product's threat model.
+
+### The shape
+
+```
+  PolyScour GUI (unelevated, may be buggy or compromised)
+        │
+        │  one typed request, one response
+        ▼
+  polyscour-helper.exe (elevated, launched per operation via UAC)
+        │
+        └── re-runs the SAME guard chain the GUI ran
+```
+
+**The helper assumes the GUI is lying.** Not as a pose — as the design
+constraint that produces every rule below. An unelevated process is easier to
+compromise than an elevated one, so a helper that trusts its caller has simply
+moved the attacker's target rather than raised the bar. If the GUI could
+persuade the helper to delete an arbitrary path, PolyScour would be a
+privilege-escalation tool with a maintenance UI.
+
+### The API is named operations, never a command
+
+There is no `ExecuteCommand(string)`, no `RunPowerShell(script)`, no
+`DeletePath(path)` that takes an arbitrary path and obeys. The surface is a
+closed set of named operations with structured parameters:
+
+| Operation | Parameters | Exists because |
+|---|---|---|
+| `DeleteApprovedPath` | `rule_id`, `path` | `windows-temp` is skipped without it |
+| `SetMachineStartupApproval` | `value_name`, `enabled` | HKLM startup entries are refused without it |
+
+Adding an operation is a code change to the helper, reviewed, in this
+repository — the same friction a cleaning rule already has. **A generic
+operation would defeat the entire design**: the value of a closed set is that
+the worst thing a compromised GUI can ask for is the worst thing on the list.
+
+### Server-side validation is the whole point
+
+The helper does not accept a path because the GUI says it is fine. For every
+request it independently re-runs the guard chain from `polyscour.safety` —
+policy lookup, root resolution, reparse inspection, containment, denylist —
+using **its own** copy of the code, against the path as it exists at that
+moment.
+
+That is not redundant with the GUI's check for the same reason `authorize()` is
+already called twice: the two calls happen at different times, in different
+processes, at different privilege levels, and only the second one is the one
+that matters. The GUI's check is a courtesy that keeps bad requests off the
+wire. The helper's is the security boundary.
+
+The `rule_id` travels with the request so the helper can look up what that rule
+is permitted to touch. A request naming a rule that does not exist is refused;
+a path outside that rule's permitted roots is refused; a reparse point
+encountered anywhere in the walk is refused.
+
+### Elevation is per-operation and not retained
+
+The helper is launched for a unit of work and exits when it is done. It does
+not install a service, does not persist, does not sit waiting for a second
+request, and there is no "keep me elevated" option. A long-lived elevated
+process is a standing target; a short-lived one is only a target while it runs.
+
+The cost is honest and is accepted: the user sees a UAC prompt per elevated
+operation rather than one per session. Batching a whole cleaning run behind one
+prompt is a legitimate future request and would need its own entry here,
+because "one prompt, many deletes" is a materially different bargain from "one
+prompt, one delete".
+
+### T15 — A compromised GUI asks the helper for something harmful
+
+**Mitigated by construction.** The operation set is closed and every parameter
+is validated by the helper against policy it holds itself. The worst a
+compromised GUI can achieve is the worst thing on the list, performed on a path
+the guard chain independently approves — which is what an honest GUI could have
+asked for anyway.
+
+**Not mitigated:** an attacker who can modify PolyScour's *installed files* can
+modify the helper too, and then no rule inside it means anything. That is the
+same non-goal already stated below, and it is why the installed location must
+be one only administrators can write.
+
+### T16 — Something impersonates the helper, or the GUI's request is tampered with
+
+**Mitigated by direction.** The GUI launches the helper itself, rather than
+connecting to something already listening, so there is no port or pipe for
+another process to claim first. The response is advisory — it tells the GUI
+what happened so it can be recorded — and nothing security-relevant depends on
+believing it.
+
+A request tampered with in flight is covered by the previous section: the
+helper validates whatever arrives, from whatever source, and a tampered request
+is just an untrusted request like every other.
+
+### T17 — The helper is used to escalate by a *different* local process
+
+**Mitigated.** The helper takes its work from arguments given at launch by the
+process that started it, and exits. It does not accept work from anything else,
+because it is not listening for anything. A local attacker who can launch it
+can only ask it for a validated operation on a policy-approved path — which is
+not an escalation, because they could have asked the elevated user to run the
+GUI and click the button.
+
+### T18 — A user consents to elevation without understanding what for
+
+**Partially mitigated, and the residue is real.** The UAC prompt names
+PolyScour, not the operation, so the specific consent lives in PolyScour's own
+UI: the confirmation says exactly which rule and how many items, and elevation
+is never requested speculatively or "in advance". Dry run stays the default at
+every level, including here.
+
+**Not mitigated:** a user who habitually clicks through UAC is not protected by
+any of this. Nothing in a maintenance tool can fix that, and pretending
+otherwise would be the invented reassurance this product exists to avoid.
 
 ## Non-goals
 
