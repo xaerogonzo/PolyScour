@@ -225,16 +225,24 @@ def test_an_unreadable_response_reads_as_failure():
 
 # ── the executor asks only when it has been told it may ─────────────────────
 
-def _one_file_plan(tmp_path):
-    """A plan whose single finding lives inside %TEMP%, so the guard approves it
-    and the delete is what fails rather than the authorisation."""
-    import os
+def _one_file_plan(tmp_path, monkeypatch):
+    """A plan with one finding the guard is made to approve.
+
+    The authorisation is stubbed rather than satisfied for real. Writing into
+    the machine's %TEMP% so the `user-temp` rule would approve it made the test
+    depend on how that path resolves — and it resolved differently on CI, where
+    the guard refused before the delete was ever attempted and the test failed
+    against working code. The property here is "does the executor consult the
+    helper for a permission failure", not "does the guard approve %TEMP%",
+    which has its own tests.
+    """
+    from polyscour.cleaning.executor import Executor
     from polyscour.contracts import ActionPlan, Evidence, Finding, RiskLevel
 
-    root = Path(os.environ["TEMP"]) / "polyscour-elev-test"
-    root.mkdir(parents=True, exist_ok=True)
-    target = root / "locked.tmp"
+    target = tmp_path / "locked.tmp"
     target.write_text("junk", encoding="utf-8")
+    monkeypatch.setattr(Executor, "_authorise", lambda self, finding: target)
+
     f = Finding(rule_id="user-temp", title="t", path=target,
                 size_bytes=target.stat().st_size, risk=RiskLevel.LOW,
                 reversible=False, evidence=Evidence("m", "o", "r"))
@@ -251,58 +259,53 @@ def _executor(tmp_path, **kw):
     return Executor(vault=Vault(tmp_path / "v"), ledger=led, **kw)
 
 
+def _raises_permission(monkeypatch):
+    from polyscour.cleaning.executor import Executor
+
+    def boom(path):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(Executor, "_remove", staticmethod(boom))
+
+
 def test_an_ordinary_executor_can_never_raise_a_uac_prompt(tmp_path, monkeypatch):
     """docs/THREAT_MODEL.md: elevation is never requested speculatively.
 
     Driven through a real permission failure rather than asserted from the
-    flag — a test that only checked `allow_elevation is False` would pass
+    flag — a test that only checked ``allow_elevation is False`` would pass
     against an executor that ignored it.
     """
-    from polyscour.cleaning.executor import Executor
     from polyscour.contracts import SkipReason
     import polyscour.elevation.client as client
 
-    plan, target = _one_file_plan(tmp_path)
-    try:
-        monkeypatch.setattr(Executor, "_remove",
-                            staticmethod(lambda path: (_ for _ in ()).throw(
-                                PermissionError("permission denied"))))
-        monkeypatch.setattr(client, "request",
-                            lambda *a, **k: pytest.fail("asked for elevation"))
+    plan, _ = _one_file_plan(tmp_path, monkeypatch)
+    _raises_permission(monkeypatch)
+    monkeypatch.setattr(client, "request",
+                        lambda *a, **k: pytest.fail("asked for elevation"))
 
-        result = _executor(tmp_path).execute(plan)
+    result = _executor(tmp_path).execute(plan)
 
-        assert [s.reason for s in result.skips] == [SkipReason.PERMISSION]
-        assert result.items_completed == 0
-    finally:
-        target.unlink(missing_ok=True)
+    assert [s.reason for s in result.skips] == [SkipReason.PERMISSION]
+    assert result.items_completed == 0
 
 
 def test_an_opted_in_executor_does_ask(tmp_path, monkeypatch):
     """The control for the test above: the flag is what makes the difference,
     so both directions have to be exercised."""
-    from polyscour.cleaning.executor import Executor
     import polyscour.elevation.client as client
 
-    plan, target = _one_file_plan(tmp_path)
-    try:
-        monkeypatch.setattr(Executor, "_remove",
-                            staticmethod(lambda path: (_ for _ in ()).throw(
-                                PermissionError("permission denied"))))
-        asked: list = []
-        monkeypatch.setattr(client, "request",
-                            lambda op, **kw: asked.append(kw) or Response(True, "deleted"))
+    plan, _ = _one_file_plan(tmp_path, monkeypatch)
+    _raises_permission(monkeypatch)
+    asked: list = []
+    monkeypatch.setattr(client, "request",
+                        lambda op, **kw: asked.append(kw) or Response(True, "deleted"))
 
-        result = _executor(tmp_path, allow_elevation=True).execute(plan)
+    result = _executor(tmp_path, allow_elevation=True).execute(plan)
 
-        assert asked, "the opted-in executor did not consult the helper"
-        assert asked[0]["rule_id"] == "user-temp"
-        assert result.items_completed == 1
-        assert result.skips == []
-    finally:
-        target.unlink(missing_ok=True)
-
-
+    assert asked, "the opted-in executor did not consult the helper"
+    assert asked[0]["rule_id"] == "user-temp"
+    assert result.items_completed == 1
+    assert result.skips == []
 def test_the_helper_is_asked_only_for_permission_failures(tmp_path, monkeypatch):
     from polyscour.cleaning.executor import Executor
     from polyscour.ledger import Ledger
