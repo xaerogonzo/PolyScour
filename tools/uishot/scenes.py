@@ -273,3 +273,54 @@ def game_mode(session):
     finally:
         gm.enumerate_candidates = real_enumerate
         gamemode_view.veto = real_veto
+
+
+@scene("startup")
+def startup(session):
+    """The list, the switches, and the entries whose switch is refused.
+
+    Constructed rather than read: a real list is this machine's startup
+    entries, which differ per machine and would make the golden a photograph
+    of whatever happens to be installed. The fixed set covers what the screen
+    exists to show -- an enabled user entry, a disabled one, one whose target
+    is gone, one that cannot be resolved at all, and a machine-wide entry
+    whose switch is refused with a reason.
+    """
+    from polybedrock.startup import RunEntry
+
+    from polyscour.startup.manager import StartupItem, TargetState
+    from polyscour.views import startup_view
+
+    RUN = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+
+    def mk(name, value, target, hive, scope, enabled, state):
+        return StartupItem(
+            entry=RunEntry(hive_name=hive, key_path=RUN, value_name=name,
+                           raw_value=value, target_path=target, scope=scope),
+            enabled=enabled, has_approval_record=True, target=state)
+
+    fixed = [
+        mk("OneDrive", r'"C:\Users\me\AppData\Local\Microsoft\OneDrive\OneDrive.exe" /background',
+           r"C:\Users\me\AppData\Local\Microsoft\OneDrive\OneDrive.exe",
+           "HKCU", "user", True, TargetState.PRESENT),
+        mk("Steam", r'"C:\Program Files (x86)\Steam\steam.exe" -silent',
+           r"C:\Program Files (x86)\Steam\steam.exe",
+           "HKCU", "user", False, TargetState.PRESENT),
+        mk("OldUpdater", r"C:\Vendor\gone\updater.exe",
+           r"C:\Vendor\gone\updater.exe",
+           "HKCU", "user", True, TargetState.MISSING),
+        mk("Odd Entry", "rundll32 something,Entry", "",
+           "HKCU", "user", True, TargetState.UNRESOLVED),
+        mk("SecurityHealth", r"%windir%\system32\SecurityHealthSystray.exe",
+           r"C:\Windows\system32\SecurityHealthSystray.exe",
+           "HKLM", "machine", True, TargetState.PRESENT),
+    ]
+
+    real = startup_view.list_items
+    startup_view.list_items = lambda: list(fixed)
+    try:
+        view = session.mount(startup_view.StartupView, app=_app())
+        view.refresh()
+        session.shot("startup_entries")
+    finally:
+        startup_view.list_items = real

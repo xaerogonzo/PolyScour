@@ -91,6 +91,26 @@ CREATE TABLE IF NOT EXISTS suspensions (
 CREATE INDEX IF NOT EXISTS ix_suspensions_open
     ON suspensions(resumed_at) WHERE resumed_at IS NULL;
 
+-- One row per startup entry PolyScour switched on or off.
+--
+-- raw_value is captured as it was AT THE TIME. Undo is not just "flip it
+-- back": between the change and the undo an installer may have rewritten the
+-- Run value to launch something else, and silently re-enabling that would be
+-- restoring a decision the user never made. The recorded value is what lets
+-- the undo path notice.
+CREATE TABLE IF NOT EXISTS startup_changes (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    identity       TEXT NOT NULL,
+    value_name     TEXT NOT NULL,
+    raw_value      TEXT NOT NULL,
+    was_enabled    INTEGER NOT NULL,
+    now_enabled    INTEGER NOT NULL,
+    changed_at     TEXT NOT NULL,
+    reverted_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_startup_identity ON startup_changes(identity);
+
 CREATE TABLE IF NOT EXISTS skips (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     operation_id   TEXT NOT NULL REFERENCES operations(operation_id),
@@ -320,3 +340,42 @@ class Ledger:
             return conn.execute(
                 "SELECT * FROM suspensions WHERE resumed_at IS NULL "
                 "ORDER BY id").fetchall()
+
+    # ── Startup Manager changes ──────────────────────────────────────────
+
+    def record_startup_change(self, identity: str, value_name: str,
+                              raw_value: str, was_enabled: bool,
+                              now_enabled: bool) -> int:
+        """Write what was changed, and what it looked like when we changed it."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO startup_changes "
+                "(identity, value_name, raw_value, was_enabled, now_enabled, "
+                " changed_at) VALUES (?,?,?,?,?,?)",
+                (identity, value_name, raw_value, int(was_enabled),
+                 int(now_enabled), _now()))
+            return int(cur.lastrowid)
+
+    def mark_startup_reverted(self, row_id: int) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE startup_changes SET reverted_at = ? "
+                "WHERE id = ? AND reverted_at IS NULL", (_now(), int(row_id)))
+
+    def startup_changes(self, limit: int = 100) -> list[sqlite3.Row]:
+        """Most recent first — what the History view renders."""
+        with self._conn() as conn:
+            return conn.execute(
+                "SELECT * FROM startup_changes ORDER BY id DESC LIMIT ?",
+                (int(limit),)).fetchall()
+
+    def last_startup_change(self, identity: str) -> "sqlite3.Row | None":
+        """The most recent un-reverted change to one entry, if any.
+
+        Used to answer "did we do this, and has it been meddled with since".
+        """
+        with self._conn() as conn:
+            return conn.execute(
+                "SELECT * FROM startup_changes WHERE identity = ? "
+                "AND reverted_at IS NULL ORDER BY id DESC LIMIT 1",
+                (identity,)).fetchone()
