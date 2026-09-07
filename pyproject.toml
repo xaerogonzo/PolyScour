@@ -9,8 +9,13 @@ description = "A transparent, evidence-based Windows maintenance suite."
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
-    "polybedrock-core>=0.1",
-    "polybedrock-ui>=0.1",
+    # Upper bounds are a compatibility *claim*, not semver ritual: they say
+    # support intentionally stops at this API generation, so PolyBedrock 0.2
+    # arriving becomes a deliberate update here rather than a silent break.
+    # PolyBedrock's CI tests a pinned PolyScour revision against the substrate
+    # under change, which is what verifies this claim rather than assuming it.
+    "polybedrock-core>=0.1,<0.2",
+    "polybedrock-ui>=0.1,<0.2",
     "customtkinter>=5.2.2",
     "psutil>=7.0",
 ]
