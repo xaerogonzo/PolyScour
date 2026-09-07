@@ -24,6 +24,7 @@ from polyscour import paths, settings as _settings  # noqa: F401  (configures cf
 from polyscour.cleaning.executor import Executor
 from polyscour.cleaning.rules import load_all
 from polyscour.cleaning.scanner import Scanner
+from polyscour.gamemode import session as gamemode
 from polyscour.ledger import Ledger
 from polyscour.safety.guard import Guard
 from polyscour.vault import Vault
@@ -43,6 +44,7 @@ ctk.set_default_color_theme("blue")
 _NAV = [
     ("dashboard", "Dashboard"),
     ("clean", "Clean"),
+    ("game", "Game Mode"),
     ("history", "History"),
     ("settings", "Settings"),
 ]
@@ -67,6 +69,18 @@ class Services:
 
         self.ledger.initialise()
         self.vault.initialise()
+
+        # Before anything else can run: a previous PolyScour that died
+        # mid-session may have left processes frozen, and a frozen process
+        # presents as an application that has hung for no reason. Nothing
+        # else in the system will ever release them. Cheap on the common
+        # path -- one indexed query returning no rows -- and never fatal:
+        # failing to recover must not stop the app that performs recovery
+        # from starting.
+        try:
+            self.game_recovery = gamemode.recover(self.ledger)
+        except Exception:
+            self.game_recovery = gamemode.RecoveryReport()
 
     def enabled_rules(self):
         disabled = set(cfg.get("disabled_rules") or [])
@@ -141,11 +155,13 @@ class App(ctk.CTk):
     # ── navigation ───────────────────────────────────────────────────────────
 
     def _factory(self, key: str):
-        from polyscour.views import (clean_view, dashboard_view, history_view,
+        from polyscour.views import (clean_view, dashboard_view,
+                                      gamemode_view, history_view,
                                       settings_view)
         return {
             "dashboard": lambda: dashboard_view.DashboardView(self.content, self),
             "clean": lambda: clean_view.CleanView(self.content, self),
+            "game": lambda: gamemode_view.GameModeView(self.content, self),
             "history": lambda: history_view.HistoryView(self.content, self),
             "settings": lambda: settings_view.SettingsView(self.content, self),
         }[key]

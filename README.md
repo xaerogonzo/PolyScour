@@ -60,11 +60,31 @@ and said so plainly.
 
 Driver management, registry cleaning, secure wipe, duplicate finder, storage
 analyser, uninstaller, WinGet updater, browser extension manager, cloud-drive
-cleaner, process explorer, service manager, scheduled cleaning, Game Mode, CLI,
+cleaner, process explorer, service manager, scheduled cleaning, CLI,
 portable mode, Recycle Bin.
 
 The strongest part of this project is what it refuses to build. The shared
 substrate and one trustworthy cleaner come first.
+
+## Game Mode
+
+Suspend background programs while you play, and resume them afterwards. A
+suspended program is frozen, not closed: it keeps its memory and carries on
+where it left off.
+
+PolyScour does not choose for you. The list is sorted by memory use because
+that is a fact worth showing — but nothing arrives ticked, and there is no
+"recommended" set. Processes it refuses to touch are shown greyed **with the
+reason**, rather than quietly missing from the list.
+
+It will not suspend kernel processes, the Windows shell, the audio service,
+service hosts, security software, itself, or anything not running as you — and
+that last rule is what covers the processes nobody thought to name.
+
+If PolyScour is closed without resuming them, the next launch resumes them and
+says so. If it is hard killed and never launched again, they stay frozen until
+you reboot; that gap is real and is why a supervising process is on the list for
+0.2 rather than improvised here.
 
 ## Running it
 

@@ -128,6 +128,37 @@ anything needing admin, reporting it plainly. When the elevated helper arrives
 in 0.2 it gets its own section here *before* it is written, with a deliberately
 narrow API and no `ExecuteCommand(string)`.
 
+### T11 — Game Mode is aimed at a process that must not be frozen
+
+**Mitigated, in two layers.** `gamemode/policy.py` refuses by number (kernel
+PIDs), by reviewed name (`NEVER_SUSPEND` — shell, audio, service hosts,
+security software, PolyScour and PolyShield), and structurally: a process not
+owned by the current user is refused whether or not anyone named it. The last
+rule is the one that covers what a list cannot.
+
+The veto runs **twice**, at list time and again immediately before the freeze,
+because a PID can be recycled onto something else in between. This is the same
+two-call design the cleaner uses, for the same reason.
+
+The interface is also part of the mitigation. Nothing arrives pre-selected;
+the list is sorted by memory because that is a fact, not because the top of it
+is a recommendation. Refused processes are shown greyed **with their reason**
+rather than hidden, so the policy is visible instead of appearing as an absence.
+
+### T12 — PolyScour dies while processes are suspended
+
+**Mitigated, with a stated residual.** A frozen process outlives whatever froze
+it and looks like a hung application. Every suspension is written to the ledger
+*before* the freeze, and `Services.__init__` resumes anything still open on the
+next launch, guarding against PID reuse by comparing the recorded process
+creation time.
+
+**Residual:** if PolyScour is hard killed and never launched again, the
+processes stay frozen until reboot. A supervising process would close that gap
+and is deliberately not built in 0.1 — it would be PolyScour's first second
+process, and 0.2's elevated helper is where that gets a threat model written
+before the code.
+
 ## Non-goals
 
 PolyScour is not an antivirus and does not try to be. It can say an item is

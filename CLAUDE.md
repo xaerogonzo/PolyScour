@@ -61,6 +61,10 @@ src/polyscour/
 │   ├── policy.py     RootFamily, RuleTrustPolicy, POLICY — THE AUTHORITY
 │   ├── reparse.py    Component-wise reparse inspection, before canonicalising
 │   └── guard.py      The chain: policy → roots → reparse → contain → denylist
+├── gamemode/
+│   ├── policy.py     NEVER_SUSPEND + structural veto — THE AUTHORITY for
+│   │                 processes, as safety/policy.py is for paths
+│   └── session.py    Record-then-freeze, resume, and startup recovery
 ├── ledger.py         SQLite history + reversals + the cross-process mutation lock
 ├── vault.py          Staged deletion: content-addressed objects + manifests
 ├── cleaning/
@@ -70,7 +74,7 @@ src/polyscour/
 │   └── executor.py   EXECUTE → VERIFY → LOG. The only code that removes things.
 ├── integrations/
 │   └── polyshield.py Optional, read-only, three commands, fails closed
-└── views/            dashboard, clean, history, settings
+└── views/            dashboard, clean, gamemode, history, settings
 rules/cleaners/*.json  Data only. Never executable, never authority.
 tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.

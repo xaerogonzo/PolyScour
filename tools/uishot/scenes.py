@@ -228,3 +228,48 @@ def settings(session):
 
     session.mount(SettingsView, app=_app())
     session.shot("settings_top")
+
+
+@scene("game-mode")
+def game_mode(session):
+    """The list, and the refusals.
+
+    The candidate list is constructed rather than enumerated: a real one is
+    this machine's processes, which differ every run and would make the golden
+    a photograph of whatever happened to be open. The constructed list is
+    chosen to include the cases the screen exists to show -- an ordinary
+    program, one refused by the reviewed list, and one refused structurally for
+    belonging to somebody else.
+    """
+    from polyscour.gamemode import session as gm
+    from polyscour.gamemode.policy import Candidate
+    from polyscour.views import gamemode_view
+
+    me = r"DESK\alex"
+    fixed = [
+        Candidate(pid=5100, name="chrome.exe", username=me,
+                  memory_bytes=1_850_000_000, create_time=1000.0),
+        Candidate(pid=5200, name="Discord.exe", username=me,
+                  memory_bytes=420_000_000, create_time=1000.0),
+        Candidate(pid=1400, name="explorer.exe", username=me,
+                  memory_bytes=310_000_000, create_time=1000.0),
+        Candidate(pid=900, name="MsMpEng.exe", username=r"NT AUTHORITY\SYSTEM",
+                  memory_bytes=280_000_000, create_time=1000.0),
+        Candidate(pid=5300, name="Spotify.exe", username=me,
+                  memory_bytes=190_000_000, create_time=1000.0),
+    ]
+
+    real_enumerate = gm.enumerate_candidates
+    real_veto = gamemode_view.veto
+    gm.enumerate_candidates = lambda: list(fixed)
+    # Pin the identity the veto compares against, so "belongs to someone else"
+    # is a property of the scene rather than of whoever runs the capture.
+    gamemode_view.veto = lambda c, **kw: real_veto(
+        c, current_user=me, protected_pids=frozenset())
+    try:
+        view = session.mount(gamemode_view.GameModeView, app=_app())
+        view.refresh()
+        session.shot("game_mode_candidates")
+    finally:
+        gm.enumerate_candidates = real_enumerate
+        gamemode_view.veto = real_veto

@@ -82,6 +82,44 @@ Rule[]  ──► Scanner.scan(cancel, on_progress)
 confirmed is not necessarily the set that was found — and that difference is
 exactly what a confirmation step is for.
 
+## Game Mode
+
+A second feature with a second authority, and deliberately not part of the
+cleaning pipeline above. It does not touch the filesystem, so it does not run
+through the guard chain; it gets its own veto in `gamemode/policy.py`, built to
+the same principle — the user's selection proposes, reviewed code disposes.
+
+```
+enumerate  ->  veto (list time)  ->  user selects  ->  veto AGAIN  ->
+    record in ledger  ->  suspend
+```
+
+The second veto is not redundant. A PID can be recycled between building a list
+and acting on it, which is the same race `authorize()` is called twice to lose.
+
+### Ordering, and what it buys
+
+`record_suspension` runs **before** `suspend_pid`, mirroring "vault object
+before delete". Dying between the two costs one harmless resume at next launch;
+the reverse order would leave a frozen process nothing knows how to release.
+`Services.__init__` calls `gamemode.recover()` on every start, before any view
+exists, and compares the recorded process creation time so a reused PID is
+identified rather than resumed blindly.
+
+### Threading and locking
+
+A Game Mode session holds **no** lock for its duration. The mutation lock
+serialises changes to the vault and ledger, and a session lasts as long as
+someone is playing — holding it across that would block every other PolyScour
+operation for hours. Each ledger write takes it briefly instead.
+
+### The gap that is not closed
+
+Nothing resumes anything until PolyScour runs again. A hard kill with no
+subsequent launch leaves processes frozen until reboot. A supervising process
+would fix it and is deferred to 0.2's elevated helper, where a second process
+gets a threat model written before its code — see `docs/THREAT_MODEL.md` T12.
+
 ## Threading
 
 Tk is not thread-safe. One rule covers it:
