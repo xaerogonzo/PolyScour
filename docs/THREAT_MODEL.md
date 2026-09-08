@@ -194,9 +194,12 @@ Two things limit the damage and one does not:
 
 ## The elevated helper
 
-*Written before the helper exists, as T10 required. What follows is a
-specification the implementation has to satisfy, not a description of
-something already built.*
+*Written before the helper existed, as T10 required: a specification the
+implementation had to satisfy rather than a description of something already
+built. The helper now exists and satisfies it. The order is kept deliberately
+-- T19 was likewise written before the operation it governs, and the day this
+section starts being edited to match code that already shipped is the day it
+stops being a threat model.*
 
 PolyScour 0.1 runs entirely unelevated and skips whatever needs administrator
 rights — the `windows-temp` rule ships and is always reported as skipped, and
@@ -232,7 +235,11 @@ closed set of named operations with structured parameters:
 | Operation | Parameters | Exists because |
 |---|---|---|
 | `DeleteApprovedPath` | `rule_id`, `path` | `windows-temp` is skipped without it |
-| `SetMachineStartupApproval` | `value_name`, `enabled` | HKLM startup entries are refused without it |
+| `DeleteApprovedPathsForRule` | `rule_id`, `exclusions` | per-file elevation is several hundred prompts — T19 |
+| `SetMachineStartupApproval` | `value_name`, `enabled`, `expected_raw_value` | HKLM startup entries are refused without it |
+
+Note what the second row does *not* take. It is the only operation here that
+cannot be told which file to act on, and that is the point of it.
 
 Adding an operation is a code change to the helper, reviewed, in this
 repository — the same friction a cleaning rule already has. **A generic
@@ -266,10 +273,17 @@ request, and there is no "keep me elevated" option. A long-lived elevated
 process is a standing target; a short-lived one is only a target while it runs.
 
 The cost is honest and is accepted: the user sees a UAC prompt per elevated
-operation rather than one per session. Batching a whole cleaning run behind one
-prompt is a legitimate future request and would need its own entry here,
-because "one prompt, many deletes" is a materially different bargain from "one
-prompt, one delete".
+*operation* rather than one per session. What an operation covers is a
+deliberate decision rather than an accident of implementation, because "one
+prompt, many deletes" is a materially different bargain from "one prompt, one
+delete".
+
+That second bargain has since been taken, for one operation and with its own
+entry: **T19** below. It was not taken to save clicks. Per-file elevation makes
+`windows-temp` several hundred UAC prompts, and a prompt a user cannot
+realistically read is not consent — it is a habit, which is the thing T18
+already says nothing here can fix. The operation that batches is narrower than
+the one that does not.
 
 ### T15 — A compromised GUI asks the helper for something harmful
 
@@ -316,6 +330,56 @@ every level, including here.
 **Not mitigated:** a user who habitually clicks through UAC is not protected by
 any of this. Nothing in a maintenance tool can fix that, and pretending
 otherwise would be the invented reassurance this product exists to avoid.
+
+### T19 — One prompt authorises many deletes
+
+**Mitigated by making the batched operation narrower than the single one.**
+
+`DeleteApprovedPathsForRule` takes a `rule_id` and nothing else that names a
+target. The helper resolves that rule's permitted roots from its own copy of
+`safety/policy.py`, enumerates them itself, and authorises every candidate it
+finds. **The caller cannot name a path at all** — so the batched operation
+removes a parameter the single-path form has, rather than adding reach. A
+compromised GUI's best move is to name a rule that was already in the reviewed
+policy table, and ask for exactly what an honest GUI would have asked for.
+
+What one consent now covers is therefore bounded by reviewed code rather than
+by the request: *everything this rule is permitted to delete, that exists right
+now, and that the guard approves individually*. The user is told the rule and
+the count before the prompt, per T18.
+
+**The batch is not a transaction, and the guard is not called once for it.**
+`authorize()` runs immediately before each item's `unlink()`, never once for
+the group — the same reason it is already called twice rather than once. A
+batch that authorised four hundred paths and then deleted four hundred paths
+would collapse the TOCTOU protection of T3 into a single check with a long
+window behind it.
+
+**Residual, stated rather than hidden:** `os.unlink()` resolves a path, so a
+window remains between an item's authorisation and its deletion, of the order
+of one syscall. Closing it entirely means deleting by handle — `CreateFileW`
+with `FILE_FLAG_OPEN_REPARSE_POINT`, then `FileDispositionInfo` — so that the
+object deleted is provably the object inspected. That is recorded in
+`docs/adr/0004` as a known residual with its mitigation named. It is narrowed,
+not closed, by the component-wise reparse check of T2, which is what makes the
+window hard to drive rather than merely brief.
+
+**A user exclusion crosses the privilege boundary with the request.** The
+helper cannot read the invoking user's settings: launched through `runas`, its
+`%LOCALAPPDATA%` need not be the same profile. So exclusions travel in the
+request — and this is safe for a reason worth stating plainly, because it is
+the only place untrusted input shapes what the helper does:
+
+> An exclusion can only ever *narrow* what is deleted. A caller that lies about
+> them can cause the helper to delete less, never more.
+
+The same argument licenses `expected_raw_value` in T13's undo check. Anything
+that can only subtract from the permitted set is safe to accept from an
+untrusted caller; nothing that could add to it ever is.
+
+Without this, a path the user explicitly protected would be honoured on the
+unelevated path and deleted on the elevated one — the setting would mean two
+different things depending on which privilege level happened to reach the file.
 
 ## Non-goals
 

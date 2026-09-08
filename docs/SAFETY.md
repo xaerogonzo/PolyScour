@@ -150,7 +150,7 @@ removes the entry; another name for the same data is not this rule's to remove,
 and the space is only reclaimed when the last link goes. A deeper policy is
 future work.
 
-## 7. Two calls, not one
+## 7. Two calls, not one — three when elevated
 
 `authorize()` runs during the scan *and* again immediately before each
 destructive operation.
@@ -165,6 +165,30 @@ call per item, which is nothing next to the I/O.
 A `GuardRefusal` at execution time is **not benign**. It means a bug or an
 attack, and it degrades the operation outcome rather than being folded in with
 locked files.
+
+### Three, when the work is elevated
+
+Where the elevated helper does the deleting, the chain runs a third time — in a
+different process, at a different privilege level, against its own copy of
+`safety/policy.py`. That third call is the only one that is a security
+boundary. The first two are courtesies that keep bad requests off the wire.
+
+The helper does not trust the request to name what to delete. It is given a
+`rule_id`, resolves that rule's permitted roots itself, and enumerates them
+itself — so there is no caller-supplied path for it to be persuaded about. See
+`docs/adr/0004` and T19.
+
+**Per item, not per batch.** A batched elevated delete calls `authorize()`
+immediately before each `unlink()`, never once for the group. Hoisting it would
+turn several hundred re-checks into one check with a long window behind it,
+which is exactly the property this section exists to keep.
+
+The user's exclusions travel with the request, because the helper cannot read
+the invoking user's settings — under `runas`, `%LOCALAPPDATA%` need not be the
+same profile. That is safe because an exclusion can only ever *narrow* what is
+deleted; a caller that lies about them causes fewer deletions, never more. It
+is also necessary: without it, a path the user protected would be honoured
+unelevated and deleted elevated.
 
 ## 8. Dry run
 
@@ -220,9 +244,15 @@ calls `gamemode.recover()` on every launch.
 
 **The residual gap is stated rather than hidden:** nothing resumes anything
 until PolyScour runs again. A hard kill with no subsequent launch leaves the
-processes frozen until reboot. Closing that needs a supervising process, which
-is deliberately deferred to the elevated helper in 0.2 — where a second process
-gets a threat-model section written before its code.
+processes frozen until reboot.
+
+Closing it needs a supervising process. The elevated helper is *not* that
+process and did not close this gap — it is launched per operation and exits,
+which is the opposite of what supervising requires. What the helper established
+is the precedent: a second process gets a threat-model section written before
+its code. The supervisor gets the same treatment, and it will be neither
+elevated nor persistent, because resuming the user's own processes needs no
+administrator rights at all.
 
 ## 10. Startup entries: a third policy, and the first registry write
 
