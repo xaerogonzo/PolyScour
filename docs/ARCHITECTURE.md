@@ -246,15 +246,27 @@ and did not finish. The ledger has a column for each, added to `operations` by
 an additive migration — `CREATE TABLE IF NOT EXISTS` does nothing to a database
 that already exists, and a history file must survive an upgrade intact.
 
-### Still deferred
+### What the helper does *not* unblock
 
-`docs/adr/0001-vault-location.md` moves the vault to `%ProgramData%\PolyScour`
-"in 0.2, alongside the installer and the elevated helper". The helper now
-exists; the installer does not, and moving the vault to a machine-wide location
-without one would leave it somewhere an unelevated PolyScour cannot write. It
-stays where it is until the installer lands — and when that lands, the ADR's
-premise needs re-deriving rather than assuming: the helper is per-operation and
-does not persist, so it is not the privileged *owner* the ADR was waiting for.
+`docs/adr/0001` deferred moving the vault to `%ProgramData%\PolyScour` "in 0.2,
+alongside the installer and the elevated helper". The helper arrived, and
+re-examining the deferral is what showed the premise was wrong —
+`docs/adr/0005` supersedes it.
+
+`%ProgramData%` makes PolyShield's data a boundary because a LocalSystem
+*service* owns the protected subtrees and the GUI only reads them. PolyScour's
+vault is written by the unelevated GUI on every clean, so the writer and the
+would-be attacker are the same principal: an ACL that lets PolyScour write its
+own history lets anything running as the user write it too.
+
+The helper is not that owner and is deliberately the wrong shape to become one.
+It is launched per operation and exits; making it the vault's writer would mean
+a UAC prompt per clean, which is retained elevation with extra steps.
+
+**The vault stays in `%LOCALAPPDATA%`, and T5 stands as written** — a
+convenience, not a security boundary. The installer is unblocked and smaller for
+it: what it must protect is the *program directory*, because an attacker who can
+rewrite the helper has defeated every rule inside it (T15).
 
 ## The Startup Manager and privilege
 
@@ -323,10 +335,12 @@ from `polyscour.paths`.
 ```
 
 `%LOCALAPPDATA%`, not `%ProgramData%` — see
-[adr/0001-vault-location.md](adr/0001-vault-location.md). 0.1 has no service and
-no elevated component, so per-user storage is correct and gets sound ACLs for
-free; creating a ProgramData tree from an unelevated first run would inherit
-permissive defaults.
+[adr/0001-vault-location.md](adr/0001-vault-location.md) and
+[adr/0005-the-vault-stays-user-scoped.md](adr/0005-the-vault-stays-user-scoped.md).
+PolyScour has no privileged writer: everything that touches the vault runs as
+the logged-in user, so per-user storage is correct and gets sound ACLs for free,
+and a machine-wide tree could not wall the vault off from the only process that
+writes it. This is settled rather than pending.
 
 **Vault collection rule:** an object may only be collected when no retained
 manifest references it. Refcounted by scanning manifests rather than by keeping

@@ -11,16 +11,23 @@ PolyShield uses ``%ProgramData%``, and for a good reason: its Windows service
 runs as ``LocalService`` and must resolve the *same* directory the GUI does,
 or the cross-process lock files stop protecting anything.
 
-PolyScour 0.1 has no service and no elevated component. Everything that touches
-the vault, the ledger and the settings runs as the logged-in user, so
-``%LOCALAPPDATA%`` is both correct and gets sound ACLs with nothing to configure.
+PolyScour has an elevated helper, and still no privileged *writer*. Everything
+that touches the vault, the ledger and the settings runs as the logged-in user,
+so ``%LOCALAPPDATA%`` is both correct and gets sound ACLs with nothing to
+configure.
 
-Creating a ``%ProgramData%`` tree from an unelevated first run would be actively
-worse: it would inherit permissive default ACLs, leaving another ordinary
-process able to tamper with the records PolyScour restores from. The right time
-to move is alongside the installer that can set per-subtree ACLs *before* the
-app first runs -- 0.2, together with the elevated helper. See
-``docs/adr/0002-vault-location.md`` for the migration.
+``%ProgramData%`` was originally deferred to "alongside the installer". The
+helper arrived and the deferral was re-examined, which is when the premise fell
+over: PolyShield's tree is a boundary because a LocalSystem *service* owns the
+protected subtrees and its GUI only reads them. PolyScour's vault is written by
+the unelevated GUI on every clean. A principal cannot be walled off from
+itself -- an ACL letting PolyScour write its own history lets anything else
+running as the user write it too.
+
+So this stays ``"user"``, and stops being described as temporary. See
+``docs/adr/0005-the-vault-stays-user-scoped.md``, which supersedes the migration
+section of ``docs/adr/0001-vault-location.md`` (the citation here previously
+named 0002, which is a different decision entirely).
 """
 from __future__ import annotations
 
