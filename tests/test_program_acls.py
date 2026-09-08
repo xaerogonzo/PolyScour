@@ -105,6 +105,17 @@ def test_verify_refuses_a_directory_where_users_hold_only_delete_child(tmp_path)
     ``FILE_DELETE_CHILD`` alone: no ``WriteData``, no ``AppendData``, no
     ``Delete``. Every bit the mask used to test is absent, and the directory is
     still one where an ordinary user can remove the executable.
+
+    **This control is stronger on CI than it is here**, which is unusual enough
+    to record. GitHub's Windows runners are administrators, so
+    ``set_program_acls.ps1`` skips its write probe there — leaving the DACL
+    check as the only thing that can fail the directory. On a developer machine
+    the write probe fires too (see the comment on the assertions below), so the
+    test can pass for a reason unrelated to the bug. On the runner it cannot.
+
+    Confirmed on the run for PR #17: this test passed on 3.11 and 3.13 while
+    ``test_verify_passes_a_real_administrator_only_directory`` skipped with the
+    elevation reason.
     """
     target = tmp_path / "program"
     target.mkdir()
