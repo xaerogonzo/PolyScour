@@ -445,6 +445,79 @@ def test_history_distinguishes_requested_granted_and_succeeded(tmp_path,
     assert "not granted" in declined.elevation.describe()
 
 
+def test_a_permission_skip_is_never_silently_dropped(tmp_path, monkeypatch):
+    """The elevated pass rebuilds the skip list, and rebuilding by exclusion is
+    how an item disappears.
+
+    A file that was not deleted and is not reported is worse than one reported
+    as failed: the user is told nothing and has no reason to look.
+    """
+    from polyscour.contracts import SkipReason
+    import polyscour.elevation.client as client
+
+    plan, _ = _one_file_plan(tmp_path, monkeypatch)
+    _raises_permission(monkeypatch)
+
+    # A helper that refuses. The skip has to survive.
+    monkeypatch.setattr(client, "request",
+                        lambda op, **kw: Response(False, "the guard said no",
+                                                  "guard"))
+
+    result = _executor(tmp_path, allow_elevation=True).execute(plan)
+
+    assert [s.reason for s in result.skips] == [SkipReason.PERMISSION]
+
+
+def test_cancelling_mid_pass_keeps_the_skips_of_rules_never_reached(
+        tmp_path, monkeypatch):
+    """Two rules, cancelled after the first. The second rule's items were
+    never attempted, so they must still be reported as needing rights."""
+    import threading
+
+    from polyscour.cleaning.executor import Executor
+    from polyscour.contracts import (ActionPlan, Evidence, Finding, RiskLevel,
+                                     Skip, SkipReason)
+    import polyscour.elevation.client as client
+
+    cancel = threading.Event()
+    ex = _executor(tmp_path, allow_elevation=True)
+
+    def answer(op, **kw):
+        cancel.set()          # stop before the second rule is reached
+        return Response(True, "", data={"rule_id": kw["rule_id"], "deleted": 0,
+                                        "candidates": 0, "skips": [],
+                                        "skip_counts": {}})
+
+    monkeypatch.setattr(client, "request", answer)
+
+    skips = [Skip(tmp_path / "a", SkipReason.PERMISSION, "", "user-temp"),
+             Skip(tmp_path / "b", SkipReason.PERMISSION, "", "windows-temp")]
+    _, _, kept, record = ex._elevated_pass(skips, 0, 0, cancel)
+
+    remaining = {s.rule_id for s in kept if s.reason is SkipReason.PERMISSION}
+    assert "windows-temp" in remaining, (
+        "the rule that was never reached lost its skip")
+    assert record.requested is True
+
+
+def test_a_permission_skip_with_no_rule_id_survives(tmp_path, monkeypatch):
+    """There is no rule to ask the helper about, so there is nothing to retry
+    — and therefore nothing that justifies removing it from the report."""
+    import threading
+
+    from polyscour.contracts import Skip, SkipReason
+    import polyscour.elevation.client as client
+
+    monkeypatch.setattr(client, "request",
+                        lambda *a, **k: pytest.fail("asked about no rule"))
+
+    ex = _executor(tmp_path, allow_elevation=True)
+    skips = [Skip(tmp_path / "a", SkipReason.PERMISSION, "denied", "")]
+    _, _, kept, _ = ex._elevated_pass(skips, 0, 0, threading.Event())
+
+    assert [s.reason for s in kept] == [SkipReason.PERMISSION]
+
+
 # ── the batched delete: what one consent covers ─────────────────────────────
 
 @pytest.fixture

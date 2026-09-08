@@ -243,8 +243,8 @@ class Executor:
         rule_ids = sorted({s.rule_id for s in needs_admin if s.rule_id})
         exclusions = [str(p) for p in self.guard.exclusions]
 
-        record = ElevationRecord(requested=True)
         kept = [s for s in skips if s.reason is not SkipReason.PERMISSION]
+        handled: set[str] = set()
         granted = False
         attempted = succeeded = 0
         details: list[str] = []
@@ -257,13 +257,10 @@ class Executor:
                                         rule_id=rule_id,
                                         exclusions=exclusions)
             if not response.ok:
-                # Report the original permission skips, not a second stranger
-                # error. Someone who declined the prompt should read "needs
-                # administrator rights", which is what they already saw.
-                kept.extend(s for s in needs_admin if s.rule_id == rule_id)
                 details.append(response.detail)
                 continue
 
+            handled.add(rule_id)
             granted = True
             data = response.data
             deleted = int(data.get("deleted", 0))
@@ -272,6 +269,18 @@ class Executor:
             completed += deleted
             bytes_ += int(data.get("bytes_freed", 0))
             kept.extend(_skips_from(data))
+
+        # Everything not actually handled keeps the skip it already had:
+        # rules the helper refused, rules never reached because the run was
+        # cancelled, and items carrying no rule id at all.
+        #
+        # Written as "not handled" rather than "the helper said no" on
+        # purpose. Rebuilding this list by exclusion is how a permission skip
+        # silently disappears -- the file is not deleted and the user is told
+        # nothing, which is the one outcome worse than reporting a failure.
+        # Someone who declined a prompt should read "needs administrator
+        # rights", which is what they already saw.
+        kept.extend(s for s in needs_admin if s.rule_id not in handled)
 
         record = ElevationRecord(requested=True, granted=granted,
                                  attempted=attempted, succeeded=succeeded,
