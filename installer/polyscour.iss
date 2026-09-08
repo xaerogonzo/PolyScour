@@ -7,7 +7,7 @@
 ;  TRACKED ON PURPOSE, for the same reason build.ps1 is: a release artifact
 ;  that cannot be reproduced from the repository is not reproducible.
 ;
-;  Expects a completed dist\PolyScour.exe -- build with:
+;  Expects a completed dist\PolyScour\ directory -- build with:
 ;      .\build.ps1
 ;
 ;  What this installs, and what it deliberately does not:
@@ -45,7 +45,13 @@
 ; ============================================================================
 
 #define AppName        "PolyScour"
-#define AppVersion     "0.2.0"
+; Overridden by build.ps1 via /DAppVersion=<v>, which reads pyproject.toml.
+; The literal below is the fallback for a bare ISCC run, and a test asserts
+; it equals pyproject.toml's version -- four unlinked version numbers is the
+; bug this replaced.
+#ifndef AppVersion
+  #define AppVersion   "0.2.0"
+#endif
 #define AppPublisher   "Alexander L Corthell"
 #define AppExeName     "PolyScour.exe"
 #define DistDir        "..\dist"
@@ -78,7 +84,13 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "{#DistDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; The WHOLE standalone directory, not one file. Under --standalone the
+; Python runtime and every .pyd sit beside PolyScour.exe, and all of them
+; are loaded by the process that runs as the elevated helper -- so all of
+; them must land inside the directory the ACLs below protect. Shipping
+; only the .exe would produce an installation that cannot start.
+; THREAT_MODEL.md T24.
+Source: "{#DistDir}\PolyScour\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; The ACL script travels with the installation rather than only running from
 ; the installer's temp directory, so the boundary can be re-checked -- and
 ; re-applied -- on a machine long after setup has been deleted.

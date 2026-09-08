@@ -564,6 +564,132 @@ that something was compiled and run.
 `tools/build_probe.py` exists to turn that into a gate, and `build.ps1` fails
 on it.
 
+### T24 — The elevated process loads its runtime from a directory the user can write
+
+*Written before any mitigation, as T10 preceded the helper and T20 preceded the
+supervisor. The measurements below are from `tools/build_probe.exe`, Nuitka
+4.2.1, on 2026-09-08.*
+
+T23 asked **which binary is elevated** and fixed it. It did not ask what that
+binary loads once it is running, and the answer is not the same.
+
+The fact was already on the page. T23 records:
+
+> The extraction directory is under `%LOCALAPPDATA%\Temp` and is **writable by
+> the user** — measured too, in the same run.
+
+That was used to justify never elevating `sys.executable`. The consequence one
+step further along was not drawn: under `--onefile`, the *installed* binary —
+correctly elevated, from a directory T15 protects — then unpacks its Python
+runtime and its native extension modules into that same user-writable
+directory and executes from there.
+
+### What was measured
+
+```
+extraction_dir             %LOCALAPPDATA%\Temp\onefile_{PID}_{TIME_US}_{RANDOM}
+extraction_dir_writable    true
+extraction_dir_dacl        NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+                           BUILTIN\Administrators:(I)(OI)(CI)(F)
+                           XAERO\pmpd:(I)(OI)(CI)(F)
+```
+
+Every ACE is `(I)` — inherited from `%LOCALAPPDATA%\Temp`, where the user holds
+Full Control. The directory contains the loadable native code: `_ctypes.pyd`,
+`_socket.pyd`, `python3xx.dll` and the rest.
+
+Under UAC split-token — one administrator account, which is the ordinary
+configuration — an elevated process runs as the same user with the same
+profile, so `%TEMP%` resolves to the same directory. *That last sentence is
+reasoned rather than measured: confirming it needs a real UAC prompt, and
+`tests/conftest.py` exists to stop this suite producing one.*
+
+### What limits it
+
+**The directory name is not predictable.** `onefile_{PID}_{TIME_US}_{RANDOM}`,
+confirmed across three runs:
+
+```
+onefile_7592_116693_qJKINLtzAbM
+onefile_31296_497158_yH7tspcQBXk
+onefile_33300_179614_6yy7L0nlQfg
+```
+
+So this is not "drop a DLL in a known path and wait". It requires local code
+execution as the same user, watching `%TEMP%` for the directory to appear, and
+replacing a module between extraction and load — a real TOCTOU race, and a
+tight one.
+
+It is also worth being accurate about the marginal risk: an attacker who
+already runs code as an administrator's split-token user has other routes to
+elevation that have nothing to do with PolyScour. This is in scope anyway,
+because T15's entire premise is that *what runs at privilege must be something
+an ordinary user cannot rewrite* — and by that standard the boundary currently
+has a hole in it, whatever else is true of the machine.
+
+### The obvious mitigation is worse than the problem
+
+`--onefile-tempdir-spec` invites a fix that makes this strictly easier to
+attack. Nuitka's own help text says so:
+
+> Use e.g. a string like `'{CACHE_DIR}/{COMPANY}/{PRODUCT}/{VERSION}'` which is
+> a good static cache path, **this will then not be removed**.
+
+A static spec trades an unpredictable, per-run directory for a **predictable
+and persistent** one, and flips `--onefile-cache-mode` to `cached`. An attacker
+would no longer need to win a race; they could pre-populate the path and wait.
+Recorded here because it is the change somebody reaches for first.
+
+### A secondary observation, on the same measurement
+
+Extraction directories are **not reliably removed**. Seven were left on the
+development machine, the largest 58 MB, each holding a complete extracted
+runtime. Nuitka removes them on a clean exit; a killed or crashed process
+leaves one behind.
+
+That is a hygiene issue rather than an escalation — stale copies are not what a
+running process loads — but it is worth stating plainly in a product that
+cleans temporary files for a living, and it means the user-writable copies
+accumulate rather than existing only for the life of a process.
+
+### Mitigation
+
+**Mitigated, by not extracting at all.** `build.ps1` builds `--standalone`
+rather than `--onefile`. The Python runtime and the native extension modules
+ship as files in the installed directory, so the code that executes at
+privilege is inside the boundary `set_program_acls.ps1` establishes rather than
+beside it. There is no extraction directory, so there is nothing to race and
+nothing to pre-populate.
+
+This is the only one of the three options that closes the hole rather than
+narrowing it. The other two were considered and rejected:
+
+- **A static `--onefile-tempdir-spec` pointing somewhere administrator-only**
+  cannot work. An ordinary unelevated run — which is *every* ordinary run — has
+  to extract there too, and cannot. The product would not start.
+- **Accepting it as a residual**, as T12 and T20 accept theirs, would have been
+  defensible: the race is tight and the name unpredictable. It was rejected
+  because the cost of closing it is packaging inconvenience rather than any
+  security trade, and a residual accepted for convenience is a different thing
+  from one accepted because the alternative is worse.
+
+**What this costs.** The installation is a directory of files rather than a
+single executable, so T15's ACLs now protect a payload with many members
+instead of one — which is the correct scope for the claim in any case, and is
+what `tools/verify_install.ps1` enumerates. `docs/adr/0006` is **unaffected**:
+"one executable, two programs" is about `entry.py` dispatching on an argument
+before importing either branch, and has nothing to do with onefile packaging.
+There is still exactly one `PolyScour.exe`, and it is still both programs.
+
+**The secondary observation is closed by the same change.** With no extraction
+there are no accumulating copies in `%TEMP%`.
+
+**Caught in future by `tools/build_probe.py`**, which fails a build whose
+running executable resolves inside a temporary extraction directory. Frozen-only,
+for the reason T23's gate is: a probe that fires on every developer run is one
+nobody reads on the run that matters.
+
+
 ## The Game Mode supervisor
 
 *Written before the supervisor existed, the same way the elevated helper's

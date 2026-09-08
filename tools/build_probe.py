@@ -19,22 +19,27 @@ there, and both are silent when wrong:
 So this is compiled with the same flags as the real entry point and run from
 the build, where its answers are facts rather than fixtures:
 
-    venv\Scripts\python.exe -m nuitka --onefile ^
+    venv\Scripts\python.exe -m nuitka --standalone ^
         --include-package=polyscour --include-package=polybedrock ^
         --include-data-dir=rules=rules ^
         --output-dir=dist tools\build_probe.py
-    dist\build_probe.exe
+    dist\probe\build_probe.exe
+
+**Same packaging as the product**, which is not a detail. A probe built
+``--onefile`` would report on a layout nobody ships, and the layout is exactly
+where these bugs live. THREAT_MODEL T24 records why the packaging is
+``--standalone``.
 
 Emits JSON so ``build.ps1`` can gate on it. Exits non-zero when the build has
-resolved something **durable** underneath the extraction directory, which is
-the one outcome that must never ship: a onefile extraction directory is deleted
-when the process exits, so a vault resolved into it loses every file a user
-believed was recoverable.
+put durable data under the resource root, when the cleaning rules are missing
+from the payload, or when anything frozen is running out of a temporary
+directory.
 """
 from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 # Run from a checkout too, so the probe can be sanity-checked before a build.
@@ -66,6 +71,27 @@ def _is_writable(directory: Path) -> bool:
         pass
     return True
 
+
+
+def _describe_dacl(directory: Path) -> list[str]:
+    """The directory's ACEs as ``icacls`` prints them, or why they are unknown.
+
+    Descriptive only. The *proof* is ``_is_writable`` above -- an ACL can be
+    read and misread, whereas a file that appears is a file that appeared. This
+    is here so a report that says "user-writable" also says *which* entry made
+    it so, without the reader having to go and look.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(["icacls", str(directory)], capture_output=True,
+                             text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [f"icacls unavailable: {exc}"]
+    if out.returncode != 0:
+        return [f"icacls exited {out.returncode}: {out.stderr.strip()}"]
+    lines = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
+    return [ln for ln in lines if "Successfully processed" not in ln]
 
 def _is_within(child: Path, parent: Path) -> bool:
     try:
@@ -111,13 +137,25 @@ def collect(expect_frozen: bool) -> dict:
             "means the predicate is answering something other than the "
             "question, and every frozen-only path is now unverifiable.")
 
-    # 2. Durable data must never live under a directory that is deleted on
-    #    exit. This is the failure that silently destroys a user's vault.
+    # 2. Durable data must never live under the resource root.
+    #
+    #    The check is unchanged; the reason it matters is not. Under onefile
+    #    the resource root was a temporary directory deleted on exit, so a
+    #    vault resolved into it was destroyed silently. Under --standalone the
+    #    resource root is the INSTALLED directory, which fails differently and
+    #    just as badly: it is administrator-only by design (T15), so an
+    #    unelevated PolyScour could not write its vault there at all -- and an
+    #    uninstall, which the installer promises leaves the vault alone, would
+    #    take it with the program.
+    #
+    #    Spelled out because a check whose stated reason has quietly become
+    #    false is one somebody eventually deletes as obsolete.
     if _is_within(data, resource):
         findings.append(
             f"the data root {data} is underneath the resource root {resource}. "
-            f"A onefile extraction directory is removed when the process ends, "
-            f"so the vault and ledger would not survive a restart.")
+            f"The resource root is the installed program directory: "
+            f"administrator-only by design, and removed by uninstall -- so the "
+            f"vault would be unwritable, then lost. See adr/0005.")
 
     # 3. Resources have to actually be in the bundle. A build that resolves the
     #    right directory and finds nothing in it presents as a working
@@ -130,21 +168,52 @@ def collect(expect_frozen: bool) -> dict:
     elif not rule_files:
         findings.append(f"the rules directory {rules} is empty.")
 
-    # 4. WHAT WOULD BE ELEVATED. The finding this probe earned its place with:
-    #    under onefile, sys.executable names a python.exe inside the extraction
-    #    directory, and that directory is writable by the user. Elevating it
-    #    hands administrator rights to whatever an attacker swapped in first.
+    # 4. WHAT WOULD BE ELEVATED, and WHAT IT LOADS ONCE IT IS. Two questions,
+    #    and the second was only asked after the first had been answered.
     #
-    #    Both checks are frozen-only. In a checkout the venv lives under the
-    #    repo root, so "the launcher is inside the resource root" is true and
-    #    means nothing -- and a probe that cries wolf on every developer run is
-    #    a probe nobody reads on the run that matters.
+    #    T23: under onefile, sys.executable named a python.exe inside a
+    #    temporary extraction directory the user could write, and that was what
+    #    ShellExecute("runas") was handed.
+    #
+    #    T24: fixing which binary is elevated did not fix what that binary
+    #    loads. Onefile unpacked the runtime and every .pyd into
+    #    %TEMP%\onefile_* and executed from there, so the code running as
+    #    administrator lived outside the directory T15 protects. Measured here
+    #    (user held Full Control, inherited from %LOCALAPPDATA%\Temp), and
+    #    fixed by building --standalone: the DLLs now ship beside the
+    #    executable, inside the installed directory.
+    #
+    #    So the invariant this gate enforces is the one that survives both:
+    #    **nothing frozen may run out of a temporary directory.**
+    #
+    #    Note what it deliberately does NOT check any more. The old form asked
+    #    whether the launcher was inside `resource_root()`, which under onefile
+    #    meant "inside the extraction directory" and was the right question by
+    #    accident. Under --standalone the resource root IS the installed
+    #    directory, so the launcher being inside it is not merely permitted --
+    #    it is the entire point, and that gate would fail every build.
     launcher = paths.running_executable()
-    if frozen and _is_within(launcher, resource):
+    runtime_dir = Path(sys.executable).resolve().parent
+
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    runtime_in_temp = _is_within(runtime_dir, temp_root)
+    launcher_in_temp = _is_within(launcher, temp_root)
+
+    if frozen and launcher_in_temp:
         findings.append(
-            f"the launch target {launcher} is inside the extraction directory. "
-            f"ShellExecute(\"runas\") on it would elevate a binary an ordinary "
-            f"user can replace -- see THREAT_MODEL T23.")
+            f"the launch target {launcher} is inside the temporary directory "
+            f"{temp_root}. ShellExecute(\"runas\") on it would elevate a binary "
+            f"an ordinary user can replace first -- THREAT_MODEL T23.")
+
+    if frozen and runtime_in_temp:
+        findings.append(
+            f"the running image {sys.executable} is inside the temporary "
+            f"directory {temp_root}, so the Python runtime and the native "
+            f"extension modules this process loads -- including when it runs "
+            f"as the ELEVATED helper -- are in a location an ordinary user can "
+            f"write. That is THREAT_MODEL T24, and it is what --standalone "
+            f"exists to prevent. Has --onefile come back?")
+
     # Writability of the launch directory is deliberately a NOTE, not a
     # finding. A freshly built exe sits in dist\, which is always writable --
     # gating on it would fail every build that ever runs, which is a gate
@@ -157,6 +226,10 @@ def collect(expect_frozen: bool) -> dict:
             f"build's directory always is. T15 is satisfied by installing, "
             f"not by building -- check it with set_program_acls.ps1 -Verify.")
 
+    # Reported whether or not it is a problem, because T24 was found by reading
+    # these three values on a run where nothing was failing.
+    runtime_dacl = _describe_dacl(runtime_dir) if frozen else []
+
     # 5. adr/0005: the vault stays user-scoped. A build must not relocate it.
     if "ProgramData" in str(data):
         findings.append(
@@ -168,6 +241,10 @@ def collect(expect_frozen: bool) -> dict:
         "executable": sys.executable,
         "resource_root": str(resource),
         "launch_target": str(launcher),
+        "runtime_dir": str(runtime_dir) if frozen else None,
+        "runtime_dir_in_temp": runtime_in_temp if frozen else None,
+        "runtime_dir_writable": _is_writable(runtime_dir) if frozen else None,
+        "runtime_dir_dacl": runtime_dacl,
         "sys_executable": sys.executable,
         "rules_dir": str(rules),
         "rule_files": rule_files,
