@@ -112,6 +112,25 @@ def _ceiling(raw: dict, key: str, cap: int, rule_id: str) -> int:
     return value
 
 
+def _floor(raw: dict, key: str, floor: int, rule_id: str) -> int:
+    """A rule may raise a floor. It may not lower one.
+
+    The mirror image of :func:`_ceiling`, and refusing rather than clamping for
+    the same reason: a rule file that tries to loosen its policy is not a rule
+    with a typo, and silently correcting it would hide the attempt.
+    """
+    value = raw.get(key, floor)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise RuleError(
+            f"rule {rule_id!r}: {key} must be a non-negative integer")
+    if value < floor:
+        raise RuleError(
+            f"rule {rule_id!r} sets {key}={value}, below the {floor} its "
+            f"policy requires. A rule may be stricter than its policy, never "
+            f"looser.")
+    return value
+
+
 def _scope(raw: str | None, entry: PolicyEntry, rule_id: str) -> Scope:
     if raw is None:
         return entry.scope
@@ -171,7 +190,7 @@ def parse(raw: dict) -> Rule:
         families=_families(raw["root_families"], entry, rule_id),
         patterns=patterns,
         conditions=tuple(raw.get("conditions", [])),
-        min_age_days=int(raw.get("min_age_days", 0)),
+        min_age_days=_floor(raw, "min_age_days", entry.min_age_days, rule_id),
         scope=_scope(raw.get("expected_scope"), entry, rule_id),
         max_candidates=_ceiling(limits, "max_candidates", entry.max_candidates, rule_id),
         max_bytes=_ceiling(limits, "max_bytes", entry.max_bytes, rule_id),

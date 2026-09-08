@@ -25,6 +25,28 @@ _OUTCOME_TEXT = {
 }
 
 
+def _elevation_sentence(row) -> str:
+    """What administrator rights did for this operation, if anything.
+
+    Reads the four recorded facts rather than one flag, and says nothing at all
+    when elevation was never requested. Tolerant of a row from a database
+    written before those columns existed: an upgraded history is still history.
+    """
+    from polyscour.contracts import ElevationRecord
+
+    try:
+        requested = bool(row["elevation_requested"])
+    except (IndexError, KeyError):
+        return ""
+    if not requested:
+        return ""
+    return ElevationRecord(
+        requested=True,
+        granted=bool(row["elevation_granted"]),
+        attempted=int(row["elevation_attempted"] or 0),
+        succeeded=int(row["elevation_succeeded"] or 0),
+    ).describe()
+
 class HistoryView(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
@@ -90,7 +112,17 @@ class HistoryView(ctk.CTkFrame):
         ctk.CTkLabel(frame, text=label, font=theme.get("item_title"),
                      anchor="w", text_color=colour).grid(row=0, column=1,
                                                          sticky="ew")
-        ctk.CTkLabel(frame, text=row["summary"], font=theme.get("small"),
+        # The elevation sentence goes on its own line rather than into the
+        # summary, because "PolyScour changed this with administrator rights"
+        # is a different class of fact from how many bytes it freed -- and it
+        # is the one a user scanning this list is most likely to be looking
+        # for. Absent entirely when elevation was never involved: a permanent
+        # "administrator: no" would be noise on every row.
+        detail = row["summary"]
+        elevation = _elevation_sentence(row)
+        if elevation:
+            detail = f"{detail}\n{elevation}"
+        ctk.CTkLabel(frame, text=detail, font=theme.get("small"),
                      anchor="w", justify="left", wraplength=560,
                      text_color=theme.color("subtext")).grid(
             row=1, column=1, sticky="ew", pady=(0, 6))

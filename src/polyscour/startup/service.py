@@ -31,7 +31,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from polyscour.startup.manager import StartupItem, list_items, set_enabled
-from polyscour.startup.policy import veto
+from polyscour.startup.policy import requires_elevation, veto
+
+
+class ElevationRefused(Exception):
+    """The elevated helper did not make the change, and said why."""
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,10 @@ class ChangeResult:
     changed: bool
     reason: str = ""
     row_id: int | None = None
+    #: Whether administrator rights were involved. Recorded rather than
+    #: inferred from the hive: a machine-wide entry that failed before the
+    #: prompt is a different event from one that was changed after it.
+    elevated: bool = False
 
 
 @dataclass(frozen=True)
@@ -49,6 +57,36 @@ class UndoResult:
     name: str
     undone: bool
     reason: str = ""
+    elevated: bool = False
+
+
+def _write(item: StartupItem, enabled: bool) -> bool:
+    """Flip one switch, elevating only where the hive requires it.
+
+    Returns whether administrator rights were used. Raises
+    :class:`ElevationRefused` if they were needed and the change did not
+    happen — including when the user simply declined, which is not a failure
+    of anything and is reported in those words.
+
+    What is sent is the entry's name and what it currently launches. Not a
+    decision, not "the veto passed": the helper re-checks the machine-wide Run
+    value exists, re-applies the absolute vetoes, compares what the entry
+    launches against what we saw, writes, and reads back. See T13 and T19.
+    """
+    if requires_elevation(item) is None:
+        set_enabled(item, enabled)
+        return False
+
+    from polyscour.elevation.client import request
+    from polyscour.elevation.protocol import Operation
+
+    response = request(Operation.SET_MACHINE_STARTUP_APPROVAL,
+                       value_name=item.entry.value_name,
+                       enabled=enabled,
+                       expected_raw_value=item.entry.raw_value)
+    if not response.ok:
+        raise ElevationRefused(response.detail)
+    return True
 
 
 def apply_change(item: StartupItem, enabled: bool, ledger) -> ChangeResult:
@@ -71,14 +109,19 @@ def apply_change(item: StartupItem, enabled: bool, ledger) -> ChangeResult:
         was_enabled=item.enabled, now_enabled=enabled)
 
     try:
-        set_enabled(item, enabled)
-    except OSError as exc:
+        elevated = _write(item, enabled)
+    except ElevationRefused as exc:
         # The row exists and describes a change that did not happen. Close it
-        # rather than leaving History asserting something false.
+        # rather than leaving History asserting something false. Identical
+        # handling to a registry error, deliberately: a declined prompt and a
+        # refused write differ in cause, not in what is now true.
+        ledger.mark_startup_reverted(row_id)
+        return ChangeResult(item, False, str(exc))
+    except OSError as exc:
         ledger.mark_startup_reverted(row_id)
         return ChangeResult(item, False, f"the registry refused the write: {exc}")
 
-    return ChangeResult(item, True, row_id=row_id)
+    return ChangeResult(item, True, row_id=row_id, elevated=elevated)
 
 
 def undo(row, ledger) -> UndoResult:
@@ -99,18 +142,30 @@ def undo(row, ledger) -> UndoResult:
     if current.entry.raw_value != row["raw_value"]:
         # Deliberately not undone. Re-enabling a value that now launches
         # something else would restore a decision nobody made.
+        #
+        # Checked here *and* in the helper. This copy keeps a pointless prompt
+        # off the screen; the helper's copy is the one that matters, because
+        # only it runs somewhere a compromised GUI cannot reach.
         return UndoResult(identity, name, False,
                           "what this entry launches has changed since "
                           "PolyScour touched it, so it has been left alone")
 
+    refusal = veto(current)
+    if refusal:
+        # An entry that has become un-changeable since the change was made --
+        # renamed to PolyScour's own, say. Undo is a write like any other.
+        return UndoResult(identity, name, False, refusal)
+
     try:
-        set_enabled(current, bool(row["was_enabled"]))
+        elevated = _write(current, bool(row["was_enabled"]))
+    except ElevationRefused as exc:
+        return UndoResult(identity, name, False, str(exc))
     except OSError as exc:
         return UndoResult(identity, name, False,
                           f"the registry refused the write: {exc}")
 
     ledger.mark_startup_reverted(row["id"])
-    return UndoResult(identity, name, True)
+    return UndoResult(identity, name, True, elevated=elevated)
 
 
 def _find(identity: str) -> StartupItem | None:

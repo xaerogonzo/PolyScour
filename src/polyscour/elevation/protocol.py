@@ -43,6 +43,16 @@ class Operation(Enum):
     #: Exists because `windows-temp` ships and is always skipped without it.
     DELETE_APPROVED_PATH = "delete_approved_path"
 
+    #: Delete everything one rule is permitted to delete, under a single
+    #: prompt. Exists because per-file elevation makes `windows-temp` several
+    #: hundred UAC dialogs, and a prompt nobody reads is not consent.
+    #:
+    #: Note what it does NOT take: a path. This operation is *narrower* than
+    #: DELETE_APPROVED_PATH -- the caller cannot name a target at all, so its
+    #: best move is to ask for what an honest caller would have asked for. See
+    #: docs/adr/0004 and THREAT_MODEL T19.
+    DELETE_APPROVED_PATHS_FOR_RULE = "delete_approved_paths_for_rule"
+
     #: Flip the StartupApproved byte in HKLM. Exists because machine-wide
     #: startup entries are listed and refused without it.
     SET_MACHINE_STARTUP_APPROVAL = "set_machine_startup_approval"
@@ -53,8 +63,23 @@ class Operation(Enum):
 #: how "1" becomes True and a refusal becomes an approval.
 _PARAMS: dict[Operation, dict[str, type]] = {
     Operation.DELETE_APPROVED_PATH: {"rule_id": str, "path": str},
-    Operation.SET_MACHINE_STARTUP_APPROVAL: {"value_name": str, "enabled": bool},
+    Operation.DELETE_APPROVED_PATHS_FOR_RULE: {"rule_id": str,
+                                               "exclusions": list},
+    Operation.SET_MACHINE_STARTUP_APPROVAL: {"value_name": str,
+                                             "enabled": bool,
+                                             "expected_raw_value": str},
 }
+
+#: The one place a string parameter may legitimately be empty. Named as a pair
+#: rather than granted per-name, so adding a second one is a visible decision.
+#:
+#: A Run value can genuinely hold empty data, and refusing the request would
+#: make such an entry untoggleable for a reason the user could not act on. The
+#: emptiness check exists to catch a caller's typo becoming a path -- there is
+#: no path here to become.
+_MAY_BE_EMPTY: frozenset[tuple[Operation, str]] = frozenset({
+    (Operation.SET_MACHINE_STARTUP_APPROVAL, "expected_raw_value"),
+})
 
 
 class MalformedRequest(ValueError):
@@ -113,7 +138,19 @@ class Request:
             if kind is not bool and not isinstance(value, kind):
                 raise MalformedRequest(f"{name} must be {kind.__name__}")
             if kind is str and not value.strip():
-                raise MalformedRequest(f"{name} must not be empty")
+                if (operation, name) not in _MAY_BE_EMPTY:
+                    raise MalformedRequest(f"{name} must not be empty")
+            if kind is list:
+                # isinstance(value, list) says nothing about what is in it, and
+                # the elements here become guard input. An empty list is valid
+                # -- it means the user configured no exclusions.
+                for element in value:
+                    if not isinstance(element, str):
+                        raise MalformedRequest(
+                            f"{name} must contain only strings")
+                    if not element.strip():
+                        raise MalformedRequest(
+                            f"{name} must not contain empty strings")
 
         return Request(operation=operation, params=dict(params))
 

@@ -76,17 +76,21 @@ src/polyscour/
 │   └── polyshield.py Optional, read-only, three commands, fails closed
 ├── elevation/
 │   ├── protocol.py   The CLOSED operation set + shape validation (not authz)
-│   ├── helper.py     Runs elevated. Re-runs the guard. Assumes the GUI lies
-│   └── client.py     ShellExecute("runas"), one prompt per operation
+│   ├── helper.py     Runs elevated. Re-runs the guard. Assumes the GUI lies.
+│   │                 Enumerates for itself, so a request names no path
+│   └── client.py     ShellExecute("runas"), one prompt per operation.
+│                     Silence timeout + cancel sentinel, not a fixed deadline
 ├── startup/
 │   ├── manager.py    Read Run keys + the StartupApproved byte; TargetState
-│   ├── policy.py     HKCU only, never ourselves — THE AUTHORITY for autoruns
-│   └── service.py    veto -> ledger -> registry, and the guarded undo
+│   ├── policy.py     veto() absolute; requires_elevation() a cost, not a
+│   │                 refusal — THE AUTHORITY for autoruns
+│   └── service.py    veto -> ledger -> registry (or helper), and the undo
 └── views/            dashboard, clean, gamemode, startup, history, settings
 rules/cleaners/*.json  Data only. Never executable, never authority.
 tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.
 tests/golden/ui/      Recorded expected look. Tracked; artifacts/ is not.
+tests/conftest.py     Makes a REAL UAC prompt from the suite fail loudly.
 ```
 
 ## Testing the GUI without it being on screen
@@ -159,8 +163,20 @@ Skip doc updates for pure internal refactors with no behaviour change.
 - **The guard is called twice** — once during the scan, once immediately before
   each destructive operation. The second call is not redundant; it is what makes
   the TOCTOU race lose.
-- **0.1 runs entirely unelevated.** Anything needing admin is skipped and
-  reported plainly. The elevated helper is a 0.2 concern.
+- **The ordinary run is unelevated, and elevation is never speculative.**
+  `allow_elevation` is run-scoped and consented: a fresh `Executor` per
+  administrator retry, never the shared one, and **never a settings key**. A
+  persisted "always elevate" is the retained elevation the threat model
+  refuses. Only `SkipReason.PERMISSION` is ever retried — administrator rights
+  do not open a file that is in use.
+- **A request to the helper may narrow, never widen.** That is the test any new
+  parameter has to pass. `exclusions` and `expected_raw_value` pass it because
+  each can only cause a refusal; anything that could add to the permitted set
+  never does, whatever it is called.
+- **The helper reads no rule files.** It resolves roots and ceilings from
+  `safety/policy.py`, which is why `min_age_days` is a floor there rather than
+  only in the JSON — an edited rule file must not be able to widen an elevated
+  delete.
 - **No telemetry, ever.** Not opt-in, not anonymous, not "just crash reports"
   without an explicit decision recorded in an ADR.
 - **Performance work needs a measurement, not a guess.** The scan went from

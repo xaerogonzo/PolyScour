@@ -199,6 +199,17 @@ class Guard:
     # ── introspection, for the UI and for diagnostics ────────────────────────
 
     @property
+    def exclusions(self) -> list[Path]:
+        """The user's own additions, canonical.
+
+        Public because they have to cross a process boundary: the elevated
+        helper cannot read the invoking user's settings, so the executor sends
+        them with the request. Safe to send, because an exclusion can only ever
+        narrow what is deleted — see docs/adr/0004.
+        """
+        return list(self._exclusions)
+
+    @property
     def protected_locations(self) -> list[Path]:
         """What the denylist currently covers, so Settings can show it.
 

@@ -174,6 +174,10 @@ class Skip:
     path: Path
     reason: SkipReason
     detail: str = ""
+    #: Which rule was acting. Needed because a permission skip is retried by
+    #: *rule* — the elevated helper is asked for a rule, never for a path —
+    #: and because the retry offer has to name what it will act on.
+    rule_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -188,6 +192,39 @@ class Reversal:
         return self.vault_object is not None
 
 
+@dataclass(frozen=True)
+class ElevationRecord:
+    """What happened when administrator rights were involved.
+
+    Four facts rather than one flag, because "elevated: yes" is untrue in both
+    of the common failure paths. A user who declines the prompt requested
+    elevation and was not granted it; a helper that runs and partly fails was
+    granted it and did not finish. Collapsing those into a boolean would make
+    History assert something that did not happen, which is the one thing this
+    product's records exist not to do.
+    """
+    requested: bool = False
+    granted: bool = False
+    attempted: int = 0
+    succeeded: int = 0
+    #: Why it did not happen, when it did not. The helper's own words.
+    detail: str = ""
+
+    @property
+    def happened(self) -> bool:
+        return self.granted and self.succeeded > 0
+
+    def describe(self) -> str:
+        """A sentence for History. Empty when elevation was never involved."""
+        if not self.requested:
+            return ""
+        if not self.granted:
+            return (f"Administrator retry requested — not granted"
+                    f"{': ' + self.detail if self.detail else ''}")
+        return (f"Administrator retry requested and granted — "
+                f"{self.succeeded:,} of {self.attempted:,} items removed")
+
+
 @dataclass
 class ActionResult:
     operation_id: str
@@ -199,6 +236,7 @@ class ActionResult:
     skips: list[Skip] = field(default_factory=list)
     reversals: list[Reversal] = field(default_factory=list)
     dry_run: bool = False
+    elevation: ElevationRecord = field(default_factory=lambda: ElevationRecord())
 
     @property
     def benign_skips(self) -> list[Skip]:
@@ -220,6 +258,33 @@ class ActionResult:
         if self.hard_failures:
             parts.append(f"{len(self.hard_failures)} failed")
         return ", ".join(parts) + "."
+
+
+#: Windows error codes worth telling apart. Anything else is unclassified and
+#: therefore not benign — an unknown failure must degrade the outcome.
+_ERROR_SHARING_VIOLATION = 32
+_ERROR_LOCK_VIOLATION = 33
+
+
+def classify_os_error(exc: OSError) -> tuple[SkipReason, str]:
+    """Turn a failed filesystem call into a skip reason and a phrase.
+
+    Lives here rather than in the executor because there are now two callers at
+    two privilege levels — the executor and the elevated helper — and they must
+    agree about what "locked" means. A helper that called a sharing violation
+    an error would make an ordinary in-use file look like a failure that needs
+    investigating.
+    """
+    if isinstance(exc, FileNotFoundError):
+        return SkipReason.VANISHED, "already gone"
+    winerror = getattr(exc, "winerror", None)
+    if winerror in (_ERROR_SHARING_VIOLATION, _ERROR_LOCK_VIOLATION):
+        return SkipReason.LOCKED, "in use by another program"
+    if isinstance(exc, PermissionError):
+        # Includes the read-only attribute. Clearing it to get past this would
+        # be forcing, which this module does not do.
+        return SkipReason.PERMISSION, "permission denied"
+    return SkipReason.ERROR, str(exc)
 
 
 def classify(planned: int, completed: int, skips: list[Skip],
