@@ -157,6 +157,55 @@ Absence of an approval record means **enabled** — that is Windows' default, an
 most entries never get a record. Orphan records (an approval naming a `Run`
 value that no longer exists) are excluded: they are not startup items, and
 listing them would offer a switch that governs nothing.
+## Two lifetimes: resource and data
+
+    RESOURCE   ships with the build, read-only, may sit in a temporary
+               extraction directory that is DELETED when the process exits
+    DATA       written by the user or the application, must survive a restart
+
+`polybedrock.paths` opens with that distinction; `paths.resource_root()` is
+PolyScour's half of it. Conflating them is how a onefile build loses a vault:
+resolve durable state under the extraction directory and every file a user
+believed was recoverable disappears when they close the program.
+
+`resource_root()` derives from `__file__`, and the level differs because a
+build has no `src/` level:
+
+    checkout    src/polyscour/paths.py   ->  parents[2] is the repo root
+    build       polyscour/paths.py       ->  parents[1] is the bundle root
+
+Not from `sys.executable`, which looks obvious and is wrong: in a Nuitka
+standalone build it names a `python.exe` that does not exist. Its parent
+happens to be right, so that version works by luck on a path to nothing.
+
+Cleaning rules are a resource, so a packaged build carries them inside itself
+and an installed machine has no rules folder to edit.
+
+**Only a real build can check the level.** The suite drives frozen behaviour
+by overriding a flag, which covers the policy and not the detection.
+`tools/build_probe.py` is compiled with the same flags, run from the build, and
+`build.ps1` fails if it reports anything durable resolving under the extraction
+directory.
+
+## The installer, and what it is for
+
+One thing: **who may write the program directory.**
+
+`PolyScour.exe` is also the elevated helper, so every rule inside it is worth
+exactly as much as the answer to that question — T15. `set_program_acls.ps1`
+sets `Administrators:F`, `SYSTEM:F`, `Users:ReadAndExecute`, disables
+inheritance, and sets the owner to Administrators, because an owner can rewrite
+a DACL whatever it says.
+
+It installs no data root. PolyScour has no privileged writer, so the vault,
+ledger and settings stay in `%LOCALAPPDATA%` and the application creates them
+itself — `docs/adr/0005`.
+
+`-Verify` runs twice: once from the installer, and once by hand as an ordinary
+user. Only the second proves anything. An administrator can write anywhere, so
+an elevated check describes the boundary rather than crossing it; the script
+says so and skips the write probe rather than reporting a pass it did not earn.
+
 ## The entry point: one executable, two programs
 
 `PolyScour.exe` with no arguments is the GUI. `PolyScour.exe

@@ -90,6 +90,42 @@ The lesson recorded here is narrower than "test the frozen path": **"am I
 frozen" is not a question worth answering twice.** One predicate, in the
 substrate, already correct for both packagers.
 
+## Cleaning rules ship inside the binary
+
+*Added 2026-09-08, with the installer.* Same decision area: what the compiled
+artifact contains.
+
+`paths.rules_dir()` resolves from the module tree, so `--include-data-dir` puts
+the rules in the payload and an installed machine has no rules folder at all.
+
+The alternative — installing `rules/cleaners/` beside the executable — was
+rejected because it offers the *appearance* of configurability with none of the
+authority. Adding a rule already requires a reviewed `PolicyEntry` in
+`safety/policy.py`; a rules directory an administrator could edit would invite
+exactly the edit that cannot work, and would hand T1 an easier target for
+nothing in return.
+
+### And the third bug of the same family
+
+`rules_dir()` resolved from `__file__` with a fixed `parents[2]`. A build has no
+`src/` level, so that walks one directory too high and finds nothing — a Clean
+screen with no rules on it, which reads as *a scan that found nothing* rather
+than as a broken build.
+
+`resource_root()` now makes the level explicit, and the reasoning is borrowed
+rather than invented: PolyShield hit the same off-by-one and its `paths.py`
+records both the fix and that **`sys.executable` is the wrong source** — in a
+Nuitka standalone build it names a `python.exe` that does not exist, so a
+version using it "works by luck while resting on a path to nothing".
+
+**No unit test in this suite can check that.** The discrepancy lives in a
+`__file__` layout that only exists inside a real build. `tools/build_probe.py`
+is compiled with the same flags and run from the build, and `build.ps1` gates
+on it — exactly how PolyShield found its own. What the suite *can* check is the
+policy, and does: that the frozen root is one level below the checkout root,
+that rules live under the resource root in both modes, and that the data root
+never does.
+
 ## Consequences
 
 - `--include-package=polybedrock` is required. It is installed editable from a

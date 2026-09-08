@@ -153,6 +153,13 @@ $guiArgs = @(
     # needs polybedrock.paths. A build missing either is one whose helper
     # cannot run -- and that failure would only appear at a UAC prompt.
     "--include-package=polyscour",
+    # Cleaning rules ship INSIDE the binary, not beside it. paths.rules_dir()
+    # resolves them relative to the module tree, which is where Nuitka puts
+    # this -- and which survives onefile, where the modules and their data land
+    # in the same temporary extraction directory. Installing them next to the
+    # exe instead would offer an editable rules folder with no authority behind
+    # it: adding a rule already requires a reviewed PolicyEntry in code.
+    "--include-data-dir=$ROOT\rules=rules",
     # ---- Anaconda bloat exclusions (safe to remove if not using Anaconda) ----
     # If building from an Anaconda or conda env, Nuitka traces into numpy,
     # scipy, pandas etc. even if your app never imports them, bundling ~450 MB
@@ -200,6 +207,79 @@ Build-Exe "$ROOT\src\polyscour\entry.py" "PolyScour.exe" $guiArgs
 # There is deliberately no second binary. A separate helper.exe would be a
 # second file to protect with ACLs and a second to verify, for no gain: the
 # helper has to be the same trusted binary in the same protected directory.
+
+# ---------- Probe the build's own idea of where things are -------------------
+#
+# The suite cannot check this. tests/test_entry.py drives frozen behaviour by
+# overriding a flag, which covers the POLICY and not the DETECTION -- nothing
+# in pytest ever runs inside a compiled build. Two things go unchecked there
+# and both are silent when wrong: whether is_frozen() actually returns True
+# here, and whether resource_root()'s level adjustment lands on the directory
+# the rules were bundled into.
+#
+# So the probe is compiled with the same flags and run, where its answers are
+# facts. It exits non-zero if the build resolved anything durable underneath
+# the extraction directory -- the outcome that silently destroys a vault.
+
+$probeArgs = @(
+    "-m", "nuitka",
+    "--onefile",
+    "--windows-console-mode=force",
+    "--include-package=polyscour",
+    "--include-package=polybedrock",
+    "--include-data-dir=$ROOT\rules=rules",
+    "--nofollow-import-to=customtkinter",
+    "--nofollow-import-to=tkinter",
+    "--remove-output",
+    "--assume-yes-for-downloads",
+    "--output-dir=$DIST",
+    "--output-filename=build_probe.exe"
+)
+
+Build-Exe "$ROOT\tools\build_probe.py" "build_probe.exe" $probeArgs
+
+Write-Host ""
+Write-Host "--- how the build resolves its paths ---" -ForegroundColor Cyan
+& "$DIST\build_probe.exe" --expect-frozen
+if ($LASTEXITCODE -ne 0) {
+    throw "build_probe reported a path the build resolves wrongly (above). " +
+          "Shipping this would produce an application that either cannot find " +
+          "its rules or cannot keep a vault."
+}
+
+# ---------- Installer --------------------------------------------------------
+#
+# The ACLs are the whole reason installing beats unzipping: PolyScour.exe is
+# also the ELEVATED helper, and every rule inside it is worth exactly as much
+# as the answer to "who can rewrite this file?" (THREAT_MODEL.md T15).
+
+$iscc = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+if (-not $iscc) {
+    foreach ($candidate in @(
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe")) {
+        if (Test-Path $candidate) { $iscc = $candidate; break }
+    }
+}
+
+if (-not $iscc) {
+    Write-Host ""
+    Write-Host "Inno Setup (ISCC.exe) not found - skipping the installer." `
+        -ForegroundColor Yellow
+    Write-Host "  The exe in $DIST is complete, but running it from there" `
+        -ForegroundColor Yellow
+    Write-Host "  leaves the program directory writable by an ordinary user," `
+        -ForegroundColor Yellow
+    Write-Host "  which is exactly what T15 says must not be true of a" `
+        -ForegroundColor Yellow
+    Write-Host "  release. Install Inno Setup 6 before shipping." `
+        -ForegroundColor Yellow
+} else {
+    Write-Host ""
+    Write-Host "--- installer ---" -ForegroundColor Cyan
+    & $iscc "$ROOT\installer\polyscour.iss"
+    if ($LASTEXITCODE -ne 0) { throw "ISCC failed (exit $LASTEXITCODE)" }
+}
 
 # ---------- Stage data files (edit per project) ------------------------------
 # If your app ships with config files, templates, docs, etc., copy them

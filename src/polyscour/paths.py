@@ -62,10 +62,48 @@ def ledger_path() -> Path:
     return app_root() / "history.sqlite"
 
 
+def resource_root() -> Path:
+    r"""Where files that *ship with the program* live. Read-only, disposable.
+
+    The other half of the distinction ``polybedrock.paths`` opens with:
+    RESOURCE ships with the build and may sit in a temporary extraction
+    directory that vanishes on exit; DATA must survive a restart. Nothing
+    durable may ever be resolved from here.
+
+    Derived from ``__file__``, and the level differs between a checkout and a
+    build because a build has no ``src/`` level:
+
+        checkout    src/polyscour/paths.py   -> parents[2] is the repo root
+        build       polyscour/paths.py       -> parents[1] is the bundle root
+
+    Not from ``sys.executable``, which is the obvious answer and is wrong.
+    PolyShield measured it: in a Nuitka *standalone* build that names
+    ``<dist>/App.dist/python.exe``, a file which does not exist. Its parent
+    happens to be right, so a ``sys.executable`` version works by luck while
+    resting on a path to nothing. The module tree also survives *onefile*,
+    where the extracted modules and their data land in the same temporary
+    directory.
+
+    **Not provable by any unit test in this suite.** The discrepancy lives in a
+    ``__file__`` layout that exists only inside a real compiled build, so
+    ``tools/build_probe.py`` is what actually checks it -- the same way
+    PolyShield found its own off-by-one.
+    """
+    here = Path(__file__).resolve()
+    return here.parents[1] if is_frozen() else here.parents[2]
+
+
 def rules_dir() -> Path:
     """Cleaner rule files.
 
     Data only, and never authority -- what a rule is *permitted* to touch lives
     in ``polyscour.safety.policy``, which is code. See that module for why.
+
+    A **resource**, so an installed build carries these inside the binary
+    rather than beside it. That is not merely convenient: adding a rule already
+    requires a reviewed ``PolicyEntry`` in code, so a rules directory an
+    administrator could edit in place would offer the appearance of
+    configurability with none of the authority -- and would hand T1 an easier
+    target than it deserves.
     """
-    return Path(__file__).resolve().parents[2] / "rules" / "cleaners"
+    return resource_root() / "rules" / "cleaners"

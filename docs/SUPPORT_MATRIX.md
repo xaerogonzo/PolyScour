@@ -12,7 +12,7 @@ answers these at runtime; probes are observational and never change anything.
 | Windows 10 21H2+ (build 19044+) | Supported |
 | Windows 10 below 21H2 | Untested. Nothing in 0.1 is known to require anything newer. |
 | Windows Server | Untested, unsupported |
-| ARM64 | Untested. Nothing in 0.1 is architecture-specific; packaging is the open question. |
+| ARM64 | Untested, and now explicitly **not** built for: `installer/polyscour.iss` sets `ArchitecturesAllowed=x64compatible`. Nothing in the source is architecture-specific, so this is a packaging decision rather than a limitation — but refusing to install is more honest than installing and failing later. |
 
 Non-Windows is not a target. Tests that touch Windows behaviour skip on other
 platforms rather than pretending to pass.
