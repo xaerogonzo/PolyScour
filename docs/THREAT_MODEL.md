@@ -49,9 +49,23 @@ A family resolves only through `safety/policy.py`. A rule id with no
 fails to load; a rule raising a ceiling fails to load. A rule file that cannot
 contain a path cannot widen its reach by editing one.
 
+**Narrowed further by an installed build.** Rules ship *inside* the binary
+rather than beside it — `paths.rules_dir()` resolves them from the module tree,
+so a packaged build carries them in its own payload. There is no rules folder
+on an installed machine for anyone to edit. That is not the reason it was done
+(adding a rule already requires a reviewed `PolicyEntry`, so an editable folder
+would offer the appearance of configurability with none of the authority) but
+it is a real consequence worth stating.
+
+A source checkout still reads `rules/cleaners/*.json` from disk, and there the
+mitigation is the one above: a rule file that cannot contain a path cannot
+widen its reach by editing one.
+
 Residual: someone who can modify `policy.py` can change anything — but they can
 already modify the whole application, so this is not a boundary PolyScour can
-defend. Shipping signed builds is the mitigation, and belongs to 0.9 packaging.
+defend from inside. What *can* be defended is who may write those files at all,
+which is T15's installed-location requirement. Signed builds remain the further
+mitigation and are not yet done.
 
 ### T2 — A junction or symlink redirects a delete out of its permitted root
 
@@ -356,10 +370,36 @@ compromised GUI can achieve is the worst thing on the list, performed on a path
 the guard chain independently approves — which is what an honest GUI could have
 asked for anyway.
 
-**Not mitigated:** an attacker who can modify PolyScour's *installed files* can
-modify the helper too, and then no rule inside it means anything. That is the
-same non-goal already stated below, and it is why the installed location must
-be one only administrators can write.
+**Not mitigated by anything inside the helper:** an attacker who can modify
+PolyScour's *installed files* can modify the helper too, and then no rule
+inside it means anything.
+
+That is why the installed location must be one only administrators can write —
+and as of 0.2 that is enforced rather than assumed. `installer/polyscour.iss`
+requires administrator rights for exactly this, and
+`installer/set_program_acls.ps1` sets the program directory to
+`Administrators:F`, `SYSTEM:F`, `Users:ReadAndExecute`, with inheritance
+disabled and **ownership set to Administrators** — an owner can rewrite a DACL
+whatever it says, so leaving the installing user as owner would leave them able
+to grant themselves write access afterwards.
+
+`{autopf}` is already administrator-only on a default Windows installation. The
+script exists because "already, by default, probably" is not a boundary: an
+install into a non-default directory inherits whatever ACL its parent had, and
+nothing would report it.
+
+**It is verified in both directions, and the verification only counts
+unelevated.** `-Verify` inspects the DACL, and when run as an ordinary user
+also *tries to cross the boundary*: it must fail to write into the program
+directory, and must still be able to read the executable. An administrator can
+write anywhere, so an elevated check would describe the boundary rather than
+prove it — the script says so, and skips the probe rather than reporting a
+pass it did not earn.
+
+Identities are well-known SIDs rather than names, because the built-in *Users*
+group is localised — it is *Benutzer* on a German Windows. A script matching
+the English string would silently fail to find the entry it meant to remove,
+and report success.
 
 ### T16 — Something impersonates the helper, or the GUI's request is tampered with
 

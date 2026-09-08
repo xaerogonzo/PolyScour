@@ -143,7 +143,46 @@ says so. If it is hard killed and never launched again, they stay frozen until
 you reboot; that gap is real and is why a supervising process is on the list for
 0.2 rather than improvised here.
 
-## Running it
+## Installing it
+
+> **No release has been built yet.** The build and installer are in the
+> repository and reviewed; what follows describes what they do, not something
+> you can download today. `docs/adr/0006` records what the first real build
+> still has to confirm.
+
+`PolyScour-Setup-<version>.exe` needs administrator rights, and asks for them
+for exactly one reason: to make `C:\Program Files\PolyScour` a directory an
+ordinary user cannot write.
+
+That is not paperwork. `PolyScour.exe` is also the elevated helper, so every
+rule inside it — the closed operation set, the safety checks re-run at
+privilege — is worth exactly as much as the answer to *who can rewrite this
+file?* Installing is what settles that; unzipping does not.
+
+It installs the program and nothing else:
+
+- **No data directory.** The vault, history and settings are created in
+  `%LOCALAPPDATA%\PolyScour` by the application itself, the first time it runs.
+- **No autorun.** PolyScour does not start with Windows. A maintenance tool
+  that installs its own autorun while shipping a screen that declines to
+  recommend disabling anyone else's would be saying two different things.
+- **No service, no scheduled task, no browser extension, no bundled anything.**
+- **Uninstalling leaves your vault alone**, because it may hold the only
+  remaining copy of a file you deleted through PolyScour. Delete
+  `%LOCALAPPDATA%\PolyScour` yourself if you want it gone.
+
+You can check the permissions rather than take the claim on trust — **as an
+ordinary user, not as an administrator**, since an administrator can write
+anywhere and would see a boundary that is not there:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\Program Files\PolyScour\set_program_acls.ps1" -Root "C:\Program Files\PolyScour" -Verify
+```
+
+It tries to write into the directory and expects to fail, and tries to read the
+executable and expects to succeed.
+
+## Running it from source
 
 ```powershell
 python -m venv venv

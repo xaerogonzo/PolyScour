@@ -220,3 +220,104 @@ def test_the_data_dir_override_still_wins_when_frozen(frozen, monkeypatch,
     frozen(True)
 
     assert paths.app_root() == tmp_path / "elsewhere"
+
+
+# ── resources vs data ───────────────────────────────────────────────────────
+
+def test_the_rules_are_found_in_a_checkout(frozen):
+    """The control. Everything below is about the frozen case, and none of it
+    means anything if the ordinary one is broken."""
+    frozen(False)
+    from polyscour import paths
+
+    assert paths.rules_dir().is_dir()
+    assert sorted(p.name for p in paths.rules_dir().glob("*.json"))
+
+
+def test_a_build_looks_one_level_shallower_for_its_resources(frozen):
+    r"""A build has no ``src/`` level, so the same expression walks one
+    directory too high.
+
+    Asserted as a *relationship* rather than a literal path, because the
+    literal differs between a checkout and a build and only one of them exists
+    here. PolyShield hit this exact off-by-one and its docstring says what
+    caught it: a probe run inside a real build, because no unit test can.
+    """
+    from polyscour import paths
+
+    frozen(False)
+    source = paths.resource_root()
+    frozen(True)
+    built = paths.resource_root()
+
+    assert built == source / "src", (
+        "the frozen resource root is not one level below the checkout root; "
+        "the level adjustment and the source layout have diverged")
+
+
+def test_the_rules_live_under_the_resource_root_in_both_modes(frozen):
+    """They ship with the program, so they belong to the disposable half."""
+    from polyscour import paths
+
+    for mode in (False, True):
+        frozen(mode)
+        assert paths.rules_dir().is_relative_to(paths.resource_root())
+
+
+def test_the_data_root_is_never_under_the_resource_root(frozen, monkeypatch):
+    r"""The failure that silently destroys a vault.
+
+    A onefile extraction directory is deleted when the process exits. A data
+    root resolved underneath it would lose every file a user believed was
+    recoverable — and would do so quietly, because the vault would look empty
+    rather than missing.
+    """
+    monkeypatch.delenv("POLYSCOUR_DATA_DIR", raising=False)
+    from polyscour import paths
+
+    for mode in (False, True):
+        frozen(mode)
+        assert not paths.app_root().is_relative_to(paths.resource_root())
+
+
+def test_the_probe_reports_a_durable_path_under_the_extraction_directory(
+        frozen, monkeypatch, tmp_path):
+    """The probe is the build gate, so its findings need a test of their own.
+
+    Driven by pointing the data root *inside* the resource root, which is the
+    shape of the real failure.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "build_probe", Path(__file__).resolve().parents[1] / "tools" / "build_probe.py")
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+
+    from polyscour import paths
+
+    frozen(False)
+    monkeypatch.setenv("POLYSCOUR_DATA_DIR", str(paths.resource_root() / "data"))
+
+    report = probe.collect(expect_frozen=False)
+
+    assert report["ok"] is False
+    assert any("underneath the resource root" in f for f in report["findings"])
+
+
+def test_the_probe_is_clean_on_an_ordinary_checkout(frozen, monkeypatch):
+    """The control for the test above: it must not report everything."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "build_probe", Path(__file__).resolve().parents[1] / "tools" / "build_probe.py")
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+
+    monkeypatch.delenv("POLYSCOUR_DATA_DIR", raising=False)
+    frozen(False)
+
+    report = probe.collect(expect_frozen=False)
+
+    assert report["ok"] is True, report["findings"]
+    assert report["rule_files"], "the checkout could not find its own rules"

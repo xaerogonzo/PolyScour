@@ -96,7 +96,12 @@ tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.
 tests/golden/ui/      Recorded expected look. Tracked; artifacts/ is not.
 tests/conftest.py     Makes a REAL UAC prompt from the suite fail loudly.
-build.ps1             Nuitka onefile. Entry is entry.py, NOT app.py.
+build.ps1             Nuitka onefile -> probe -> installer. Entry is
+                      entry.py, NOT app.py.
+tools/build_probe.py  How a REAL build resolves its paths. The suite cannot
+                      check the detection, only the policy.
+installer/            polyscour.iss + set_program_acls.ps1. The ACLs are the
+                      whole reason installing beats unzipping (T15).
 ```
 
 ## Testing the GUI without it being on screen
@@ -179,6 +184,11 @@ Skip doc updates for pure internal refactors with no behaviour change.
   parameter has to pass. `exclusions` and `expected_raw_value` pass it because
   each can only cause a refusal; anything that could add to the permitted set
   never does, whatever it is called.
+- **RESOURCE and DATA are different lifetimes.** `paths.resource_root()`
+  ships with the build and may sit in a temp directory deleted on exit;
+  `app_root()` must survive a restart. Never resolve anything durable from the
+  first. A build has no `src/` level, so `resource_root()` adjusts — and only
+  `tools/build_probe.py`, run from a real build, can check that.
 - **Nothing that runs elevated may import the GUI.** `entry.py` dispatches on
   argv before importing either branch, and a subprocess test asserts
   `customtkinter` is absent from `sys.modules` in a real elevated run. Loading
