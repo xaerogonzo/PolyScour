@@ -24,13 +24,15 @@ detail.
 What this does not survive
 --------------------------
 
-**Nothing resumes anything until PolyScour runs again.** If the machine is hard
-killed and PolyScour is never launched again, the processes stay frozen until
-reboot. A supervising process would close that gap; it is deliberately not
-built here, because it would be PolyScour's first second process and the plan
-introduces that in 0.2's elevated helper, where it gets a threat-model section
-written before the code. Recorded rather than glossed: see
-``docs/ARCHITECTURE.md``.
+A supervisor narrows this and does not remove it. :mod:`polyscour.gamemode.supervisor`
+is an unprivileged child, started at the first suspension, that waits on a
+handle to this process and then runs :func:`recover` -- so the window becomes
+"until PolyScour's process ends" rather than "until the user next opens
+PolyScour, which may be never".
+
+**A kill that takes both leaves things exactly as this paragraph describes
+them.** That is T20, it is stated as a non-mitigation, and nothing here should
+be written as though recovery were guaranteed.
 
 PID reuse
 ---------
@@ -48,6 +50,7 @@ from dataclasses import dataclass, field
 
 from polybedrock.proc_control import resume_pid, suspend_pid
 
+from polyscour.gamemode import supervisor
 from polyscour.gamemode.policy import Candidate, veto
 
 
@@ -139,6 +142,11 @@ class GameSession:
         self.session_id = session_id or uuid.uuid4().hex
         #: row id -> (pid, name)
         self._held: dict[int, tuple[int, str]] = {}
+        #: Whether a recovery supervisor is watching this process. Recorded
+        #: rather than assumed, so the interface can say "a supervisor is
+        #: running" only when one is -- a claim about recovery that is not
+        #: checked is the kind of reassurance this product refuses to invent.
+        self.supervised = False
 
     @property
     def held_count(self) -> int:
@@ -165,6 +173,13 @@ class GameSession:
             if suspend_pid(cand.pid):
                 self._held[row_id] = (cand.pid, cand.name)
                 results.append(SuspendOutcome(cand, True))
+                # After the first real suspension, and not before: there is
+                # nothing to recover until something is frozen, and a watcher
+                # started speculatively is a process running for no reason.
+                # Never fatal -- without it, recovery still happens at the
+                # next launch, which is where it happened before.
+                if not self.supervised:
+                    self.supervised = supervisor.ensure_running()
             else:
                 # The record already exists; close it rather than leaving a row
                 # claiming a freeze that never happened.

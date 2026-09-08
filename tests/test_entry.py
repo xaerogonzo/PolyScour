@@ -321,3 +321,72 @@ def test_the_probe_is_clean_on_an_ordinary_checkout(frozen, monkeypatch):
 
     assert report["ok"] is True, report["findings"]
     assert report["rule_files"], "the checkout could not find its own rules"
+
+
+# ── the third program ───────────────────────────────────────────────────────
+
+def test_the_supervisor_flag_runs_the_supervisor_and_not_the_application(
+        monkeypatch):
+    import polyscour.app as app
+    import polyscour.gamemode.supervisor as supervisor
+
+    monkeypatch.setattr(app, "main",
+                        lambda: pytest.fail("started the GUI to supervise"))
+    seen = []
+    monkeypatch.setattr(supervisor, "main", lambda argv: seen.append(argv) or 0)
+
+    assert entry.main(["--supervise-game-mode", "4321", "1.5"]) == 0
+    assert seen == [["4321", "1.5"]]
+
+
+@pytest.mark.parametrize("args", [
+    ["--supervise-game-mode-x", "1", "2"],
+    ["--SUPERVISE-GAME-MODE", "1", "2"],
+    ["-supervise-game-mode", "1", "2"],
+])
+def test_a_near_miss_of_the_supervisor_flag_is_still_unknown(args, monkeypatch):
+    """Adding a second flag must not turn the comparison into a prefix match."""
+    import polyscour.app as app
+    monkeypatch.setattr(app, "main",
+                        lambda: pytest.fail(f"{args} started the GUI"))
+
+    assert entry.main(args) == 2
+
+
+def test_the_supervisor_branch_never_imports_the_gui(tmp_path):
+    """Same property as the elevated branch, for the same reason.
+
+    This one may outlive the window by seconds; there is no sense keeping Tk
+    loaded to resume a process.
+    """
+    probe = (
+        "import sys\n"
+        "from polyscour.entry import main\n"
+        # A pid that cannot exist, so it exits without waiting on anything.
+        "code = main(['--supervise-game-mode', '0', '1.0'])\n"
+        "gui = {'customtkinter', 'tkinter', 'PIL', 'pystray'}\n"
+        "loaded = sorted(m for m in sys.modules if m.split('.')[0] in gui)\n"
+        "print(repr((code, loaded)))\n"
+    )
+    done = subprocess.run([sys.executable, "-c", probe],
+                          capture_output=True, text=True, timeout=120)
+
+    assert done.returncode == 0, done.stderr
+    code, loaded = eval(done.stdout.strip())
+    assert code == 2, "a pid of 0 should have been refused"
+    assert loaded == [], f"the supervisor branch imported {loaded}"
+
+
+def test_child_argv_is_the_one_place_the_frozen_question_is_asked(frozen):
+    """Three callers now re-invoke this program. The frozen/source distinction
+    has already been got wrong once; it is asked in one place so it cannot be
+    got wrong differently in each."""
+    from polyscour.entry import (HELPER_FLAG, SUPERVISOR_FLAG, child_argv)
+
+    frozen(False)
+    assert child_argv(HELPER_FLAG, "r.json")[:3] == [
+        sys.executable, "-m", "polyscour.entry"]
+
+    frozen(True)
+    assert child_argv(SUPERVISOR_FLAG, "1", "2.0") == [
+        sys.executable, SUPERVISOR_FLAG, "1", "2.0"]

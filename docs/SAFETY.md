@@ -252,8 +252,9 @@ which is the opposite of what supervising requires. What the helper established
 is the precedent: a second process gets a threat-model section written before
 its code.
 
-That section is now written — `THREAT_MODEL.md`, "The Game Mode supervisor",
-plus T20–T22 — and it commits to three things before any code exists:
+That section was written first — `THREAT_MODEL.md`, "The Game Mode
+supervisor", plus T20–T22 — and `gamemode/supervisor.py` was built to it. It
+commits to three things:
 
 - **Unelevated.** Resuming the user's own processes needs no administrator
   rights, so asking for them would buy a standing target to pay for a
@@ -267,6 +268,19 @@ plus T20–T22 — and it commits to three things before any code exists:
 And it is honest about what it buys: the window narrows from "until the user
 next opens PolyScour, which may be never" to "until PolyScour's process ends".
 A kill that takes both leaves the gap exactly as T12 describes it.
+
+Two mechanics are worth knowing when reading the code. It waits on a **handle**
+rather than a pid, and verifies the parent's creation time through
+`GetProcessTimes` on that handle before waiting — a handle names a process
+object, so a recycled pid cannot redirect it, and asking the handle rather than
+the pid means the answer is about the object actually held. And it calls
+`gamemode.recover()` rather than reimplementing it, because a second copy of
+"resume what we froze" is a second place to forget the PID-reuse guard.
+
+`tests/conftest.py` refuses to let the suite spawn a real one. It was needed:
+two existing Game Mode tests reached the spawn on the first run after wiring,
+and a detached supervisor waiting on **pytest** would, at exit, open the
+developer's real ledger.
 
 ## 10. Startup entries: a third policy, and the first registry write
 

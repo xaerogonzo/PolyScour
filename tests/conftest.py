@@ -37,7 +37,39 @@ def no_real_uac_prompts(monkeypatch, request):
     monkeypatch.setattr(client, "_launch", refuse)
 
 
+@pytest.fixture(autouse=True)
+def no_real_supervisors(monkeypatch, request):
+    """Fail loudly rather than leaving a detached process behind.
+
+    ``GameSession.suspend`` starts a recovery supervisor after the first
+    successful suspension. In the suite that would spawn a real, detached
+    child which waits on the **pytest** process — and then, when pytest exits,
+    opens a ledger and resumes whatever it says.
+
+    Worse than an orphan: unless ``POLYSCOUR_DATA_DIR`` happens to be set for
+    that test, the ledger it opens is the developer's real one.
+
+    Opt out with ``@pytest.mark.allows_supervisor`` for a test that genuinely
+    drives the spawn.
+    """
+    if request.node.get_closest_marker("allows_supervisor"):
+        return
+
+    import polyscour.gamemode.supervisor as supervisor
+
+    def refuse():
+        raise AssertionError(
+            "a test tried to spawn a real Game Mode supervisor. Patch "
+            "polyscour.gamemode.supervisor.ensure_running in the test: the "
+            "suite must not leave detached processes waiting on pytest.")
+
+    monkeypatch.setattr(supervisor, "_spawn", refuse)
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "allows_elevation: this test may drive the real helper launcher")
+    config.addinivalue_line(
+        "markers",
+        "allows_supervisor: this test may spawn a real supervisor process")

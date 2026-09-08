@@ -37,31 +37,67 @@ from __future__ import annotations
 
 import sys
 
-#: The one flag. Not a prefix match, not ``argparse``: an exact string, so
+#: The flags. Not prefix matches, not ``argparse``: exact strings, so
 #: ``--elevated-helper-x`` is an unknown argument rather than a near miss that
 #: something helpfully accepts.
-_HELPER_FLAG = "--elevated-helper"
+HELPER_FLAG = "--elevated-helper"
+SUPERVISOR_FLAG = "--supervise-game-mode"
+
+#: Backwards-compatible alias. The name was private when there was one flag.
+_HELPER_FLAG = HELPER_FLAG
+
+
+def child_argv(flag: str, *args: str) -> list[str]:
+    """The argv that re-invokes *this program* with ``flag``.
+
+    One place, because the frozen/source distinction has now been got wrong
+    once already: ``_helper_command`` tested ``sys.frozen``, which Nuitka does
+    not set, so a compiled build would have asked the executable to run a
+    module it has no interpreter for. Every caller that needs to launch
+    PolyScour as a child asks here instead of deciding again.
+
+    ``polyscour.paths`` is imported inside the function rather than at module
+    scope, so this module keeps its property of importing neither branch until
+    something actually asks for one.
+    """
+    from polyscour import paths
+
+    if paths.is_frozen():
+        return [sys.executable, flag, *args]
+    return [sys.executable, "-m", "polyscour.entry", flag, *args]
 
 _USAGE = f"""PolyScour — a transparent, evidence-based Windows maintenance suite.
 
-  PolyScour.exe                            start the application
-  PolyScour.exe {_HELPER_FLAG} <request>   run one elevated operation
+  PolyScour.exe                                    start the application
+  PolyScour.exe {HELPER_FLAG} <request>            run one elevated operation
+  PolyScour.exe {SUPERVISOR_FLAG} <pid> <started>  watch a Game Mode session
 
-The second form is launched by PolyScour itself, through Windows' own
-administrator prompt. It is not a supported way to run anything by hand: the
-request file names an operation from a closed set, and the elevated process
-re-checks every part of it regardless of who wrote it."""
+Neither of the latter two is a supported way to run anything by hand.
+
+The second is launched by PolyScour through Windows' own administrator prompt:
+the request file names an operation from a closed set, and the elevated process
+re-checks every part of it regardless of who wrote it.
+
+The third is an ordinary, unprivileged child that waits for the process it was
+given and then resumes whatever the ledger says that process left frozen. It
+holds no privilege, and its arguments can only ever make it do less."""
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
 
-    if args and args[0] == _HELPER_FLAG:
+    if args and args[0] == HELPER_FLAG:
         # Imported here rather than at module scope so the GUI branch does not
         # pay for it, and -- far more importantly -- so this branch cannot
         # reach anything the other one imports.
         from polyscour.elevation.helper import main as helper_main
         return helper_main(args[1:])
+
+    if args and args[0] == SUPERVISOR_FLAG:
+        # Also GUI-free, for a different reason: this one may outlive the
+        # window by seconds and there is no sense keeping Tk loaded to do it.
+        from polyscour.gamemode.supervisor import main as supervisor_main
+        return supervisor_main(args[1:])
 
     if args:
         print(f"unknown argument: {args[0]!r}\n", file=sys.stderr)
