@@ -352,7 +352,12 @@ what the cleaning path already does when it re-scans afterwards.
 - cancelling stops between items, and what was deleted stays deleted
 - the staging directory is removed on all six exit paths, including the error
   ones nobody exercises by hand
-- a helper reporting progress does not trip the timeout; a silent one does
+- a helper reporting progress does not trip the timeout; a silent one
+  does — both driven by a fake clock the test advances, because the
+  first version used real sleeps against a 0.15 s deadline and failed
+  on a loaded machine after passing twice in CI. A test that is usually
+  right is worse than one that is wrong: a real regression reads as
+  "flaky again"
 
 `tests/test_ledger.py`, because a history file must survive an upgrade:
 
