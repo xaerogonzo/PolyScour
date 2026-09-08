@@ -19,8 +19,9 @@ The exact mechanism, named
 Toggling writes ``HKCU\...\Explorer\StartupApproved\Run``, the same approval
 byte Task Manager writes. The ``Run`` value itself is never touched, so nothing
 is deleted and every other tool on the machine sees the same truth. Machine-wide
-(``HKLM``) entries are listed but their switch is refused, with the reason, since
-0.1 runs unelevated.
+(``HKLM``) entries have a working switch and a stated cost: changing one affects
+every account, so it goes through the elevated helper and raises a UAC prompt.
+Nothing is pre-selected and nothing is recommended, at either privilege.
 """
 from __future__ import annotations
 
@@ -29,7 +30,8 @@ from polybedrock.ui import theme
 
 from polyscour.startup import service
 from polyscour.startup.manager import list_items
-from polyscour.startup.policy import describe_target, veto
+from polyscour.startup.policy import (describe_target,
+                                      requires_elevation, veto)
 
 
 
@@ -92,8 +94,8 @@ class StartupView(ctk.CTkFrame):
         on = sum(1 for i in items if i.enabled)
         self.status.configure(
             text=f"{len(items)} entries, {on} enabled. "
-                 f"Machine-wide entries are shown but cannot be changed "
-                 f"without administrator rights.")
+                 f"Machine-wide entries affect every account and ask for "
+                 f"administrator rights when you change one.")
 
     def _render_row(self, it) -> None:
         row = ctk.CTkFrame(self.list, fg_color="transparent")
@@ -101,6 +103,7 @@ class StartupView(ctk.CTkFrame):
         row.grid_columnconfigure(1, weight=1)
 
         refusal = veto(it)
+        cost = requires_elevation(it)
         var = ctk.BooleanVar(value=it.enabled)
         switch = ctk.CTkSwitch(
             row, text="", width=40, variable=var,
@@ -115,20 +118,49 @@ class StartupView(ctk.CTkFrame):
 
         # describe_target already explains a missing or unresolvable target;
         # appending a second phrase for the same fact read as two problems.
+        #
+        # The elevation cost is shown next to a *working* switch rather than
+        # in place of one. "Affects every account on this machine" is a thing
+        # to read before flipping it, not an explanation for why it is greyed.
         detail = describe_target(it)
         if refusal:
             detail = f"{detail}  ·  {refusal}"
+        elif cost:
+            detail = f"{detail}  ·  {cost}"
         ctk.CTkLabel(row, text=detail, anchor="w", font=theme.get("small"),
                      text_color=theme.color("subtext")
                      ).grid(row=1, column=1, sticky="ew")
 
-        ctk.CTkLabel(row, text=it.scope, anchor="e", font=theme.get("small"),
+        scope = f"{it.scope}  ·  admin" if cost and not refusal else it.scope
+        ctk.CTkLabel(row, text=scope, anchor="e", font=theme.get("small"),
                      text_color=theme.color("subtext")
                      ).grid(row=0, column=2, rowspan=2, padx=6)
 
     def _toggle(self, it, var) -> None:
         wanted = bool(var.get())
-        result = service.apply_change(it, wanted, self.app.services.ledger)
+        ledger = self.app.services.ledger
+
+        if requires_elevation(it) is None:
+            self._toggled(it, var, wanted,
+                          service.apply_change(it, wanted, ledger), None)
+            return
+
+        # A machine-wide change raises a UAC prompt, and the prompt is modal to
+        # the desktop rather than to us: doing it inline freezes the window
+        # behind the dialog and Windows paints it as "not responding". The
+        # switch is left where the user put it and disabled until the answer
+        # arrives, so the screen never shows a state nobody has agreed to yet.
+        self.status.configure(
+            text=f"{it.name}: waiting for administrator rights…")
+        self.app.run_off_thread(
+            lambda: service.apply_change(it, wanted, ledger),
+            lambda result, error: self._toggled(it, var, wanted, result, error))
+
+    def _toggled(self, it, var, wanted, result, error) -> None:
+        if error is not None:
+            var.set(it.enabled)
+            self.status.configure(text=f"{it.name}: {error}")
+            return
         if not result.changed:
             # Put the switch back where it was: leaving it showing a state the
             # registry does not have would be the screen lying about the machine.
@@ -136,6 +168,12 @@ class StartupView(ctk.CTkFrame):
             self.status.configure(text=f"{it.name}: {result.reason}")
             return
         self.refresh()
+        # Says which mechanism was used, because "PolyScour changed something
+        # for every account on this machine" is a different sentence from
+        # "PolyScour changed something for you", and the user should read the
+        # one that happened.
+        where = ("for every account on this machine" if result.elevated
+                 else "for your account")
         self.status.configure(
-            text=f"{it.name} is now {'enabled' if wanted else 'disabled'}. "
-                 f"Undo it here or in Task Manager.")
+            text=f"{it.name} is now {'enabled' if wanted else 'disabled'} "
+                 f"{where}. Undo it here or in Task Manager.")

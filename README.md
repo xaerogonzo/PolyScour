@@ -47,7 +47,7 @@ Eight cleaning rules, grouped so you decide by category rather than by file:
 | Rule | Risk | Reversible |
 |---|---|---|
 | User temporary files | Low | No — permanent |
-| Windows temporary files | Low | No — needs admin, skipped and reported |
+| Windows temporary files | Low | No — needs admin, offered as a retry |
 | Explorer thumbnail cache | Safe | No — Windows rebuilds it |
 | DirectX shader cache | Safe | No — regenerated on demand |
 | Chrome / Edge / Firefox cache | Safe | No — rebuilt as you browse |
@@ -57,8 +57,9 @@ Browser rules refuse to run while that browser is open, because clearing a cache
 out from under a live profile can corrupt it. If process enumeration fails, the
 rule skips rather than guessing.
 
-Runs **entirely unelevated**. Anything needing administrator rights is skipped
-and said so plainly.
+The ordinary run is **entirely unelevated**. Anything needing administrator
+rights is skipped and said so plainly — and then offered as a retry you can
+decline, with the count and the rule named before the prompt appears.
 
 ## What it deliberately does not do yet
 
@@ -77,7 +78,15 @@ entries. PolyScour 0.1 skipped both and said so. It can now ask.
 
 **It asks per operation, and never on its own.** There is no service, nothing
 stays elevated, and no screen requests rights "in advance" — you see a prompt
-when you have asked for something that needs one.
+when you have asked for something that needs one. There is no setting that
+turns this on permanently, and there will not be one.
+
+Clearing `C:\Windows\Temp` is **one prompt, not one per file**. It earns that
+by asking for less, not more: the request names the cleaning rule and cannot
+name a file at all, so the elevated part works out for itself what that rule is
+allowed to delete. A retry tells you how many items it covers and how many it
+will *not* — files in use are not something administrator rights fix, and they
+are counted separately rather than folded into one number.
 
 The elevated part is deliberately small: a closed list of named operations, no
 "run this command" of any kind, and it re-checks every path against the same
@@ -93,9 +102,16 @@ What Windows starts for you, and a switch for each one.
 Turning an entry off writes the same approval byte Task Manager writes, in
 `HKCU\...\Explorer\StartupApproved\Run`. **The `Run` value itself is never
 touched**, so nothing is deleted, Task Manager shows the same state, and you can
-turn it back on from either place. Machine-wide (`HKLM`) entries are listed but
-their switch is refused with the reason, because changing them needs
-administrator rights that 0.1 does not use.
+turn it back on from either place. Machine-wide (`HKLM`) entries have a working
+switch and a stated cost: changing one affects every account, so it asks for
+administrator rights. The row says so before you touch it, rather than
+explaining afterwards.
+
+This is a real trade. Machine-wide autoruns being refused outright was a
+limit on the damage this screen could do — most security software registers
+there — and that limit is gone. What is left is that nothing is pre-selected,
+nothing is recommended, and Windows asks you to confirm. `docs/THREAT_MODEL.md`
+T14 records the judgement rather than presenting it as a free improvement.
 
 PolyScour does not suggest what to turn off, and there is no "recommended" set.
 Startup impact is usually small, and an entry you rarely use is not evidence

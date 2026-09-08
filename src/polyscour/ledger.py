@@ -43,6 +43,11 @@ _LOCK_TIMEOUT_S = 10.0
 _LOCK_RETRY_S = 0.05
 
 _SCHEMA = """
+-- The four elevation columns are four facts rather than one flag, because
+-- "elevated: yes" is untrue in both of the common failure paths: a declined
+-- prompt was requested and not granted, and a partial run was granted and did
+-- not finish. A record that cannot tell those apart is asserting something
+-- that did not happen, which is the failure this table exists to avoid.
 CREATE TABLE IF NOT EXISTS operations (
     operation_id   TEXT PRIMARY KEY,
     started_at     TEXT NOT NULL,
@@ -52,7 +57,11 @@ CREATE TABLE IF NOT EXISTS operations (
     bytes_freed    INTEGER NOT NULL,
     items_completed INTEGER NOT NULL,
     rule_ids       TEXT NOT NULL,
-    summary        TEXT NOT NULL
+    summary        TEXT NOT NULL,
+    elevation_requested INTEGER NOT NULL DEFAULT 0,
+    elevation_granted   INTEGER NOT NULL DEFAULT 0,
+    elevation_attempted INTEGER NOT NULL DEFAULT 0,
+    elevation_succeeded INTEGER NOT NULL DEFAULT 0
 );
 
 -- One row per item that CAN be undone. An operation with no rows here is not
@@ -195,6 +204,32 @@ def new_operation_id() -> str:
     return f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
 
 
+#: Columns added after 0.1 shipped. ``CREATE TABLE IF NOT EXISTS`` does nothing
+#: to a database that already exists, so a user upgrading in place would keep
+#: the old shape and every insert naming a new column would fail. Additive and
+#: idempotent: no table is rewritten, and nothing is ever dropped -- a history
+#: file is the one thing in this product that must survive an upgrade intact.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "operations": {
+        "elevation_requested": "INTEGER NOT NULL DEFAULT 0",
+        "elevation_granted": "INTEGER NOT NULL DEFAULT 0",
+        "elevation_attempted": "INTEGER NOT NULL DEFAULT 0",
+        "elevation_succeeded": "INTEGER NOT NULL DEFAULT 0",
+    },
+}
+
+
+def _add_missing_columns(conn) -> None:
+    for table, columns in _ADDED_COLUMNS.items():
+        present = {row["name"] for row in
+                   conn.execute(f"PRAGMA table_info({table})")}
+        if not present:
+            continue          # the schema above will have just created it
+        for name, declaration in columns.items():
+            if name not in present:
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+
 class Ledger:
     def __init__(self, db_path: Path) -> None:
         self.path = Path(db_path)
@@ -207,6 +242,7 @@ class Ledger:
         conn.row_factory = sqlite3.Row
         try:
             conn.executescript(_SCHEMA)
+            _add_missing_columns(conn)
             yield conn
             conn.commit()
         finally:
@@ -227,7 +263,12 @@ class Ledger:
         """
         with self._conn() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO operations VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO operations ("
+                " operation_id, started_at, finished_at, outcome, dry_run,"
+                " bytes_freed, items_completed, rule_ids, summary,"
+                " elevation_requested, elevation_granted,"
+                " elevation_attempted, elevation_succeeded)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (result.operation_id,
                  result.started_at.isoformat(timespec="seconds"),
                  result.finished_at.isoformat(timespec="seconds"),
@@ -236,7 +277,11 @@ class Ledger:
                  result.bytes_freed,
                  result.items_completed,
                  json.dumps(sorted(set(rule_ids))),
-                 result.summary()))
+                 result.summary(),
+                 int(result.elevation.requested),
+                 int(result.elevation.granted),
+                 result.elevation.attempted,
+                 result.elevation.succeeded))
 
             conn.executemany(
                 "INSERT INTO reversals (operation_id, original_path, vault_object)"

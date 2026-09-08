@@ -24,7 +24,7 @@ from polybedrock.startup import RunEntry
 from polyscour.ledger import Ledger
 from polyscour.startup import service
 from polyscour.startup.manager import StartupItem, TargetState
-from polyscour.startup.policy import veto
+from polyscour.startup.policy import requires_elevation, veto
 
 
 RUN = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
@@ -55,9 +55,28 @@ def test_a_user_entry_may_be_changed():
     assert veto(item()) is None
 
 
-def test_machine_wide_entries_are_refused_with_the_reason():
-    reason = veto(item(hive="HKLM", scope="machine"))
-    assert reason and "administrator" in reason
+def test_machine_wide_entries_are_a_cost_not_a_refusal():
+    """The two answers are deliberately separate.
+
+    A cost is something a user can choose to pay; a refusal is not. Showing
+    them as the same thing either hides an available action or offers an
+    impossible one — and before the helper existed, this WAS a refusal.
+    """
+    machine = item(hive="HKLM", scope="machine")
+    assert veto(machine) is None
+    assert "administrator" in (requires_elevation(machine) or "")
+
+
+def test_the_absolute_refusals_stay_absolute_at_any_privilege():
+    """Neither of these becomes acceptable with administrator rights.
+
+    A product that can switch off its own autorun has a way to make itself
+    un-restorable by a user who then cannot find it, and elevation does not
+    change that.
+    """
+    assert requires_elevation(item(name="PolyScour")) is None
+    assert veto(item(name="PolyScour"))
+    assert veto(item(name=""))
 
 
 def test_polyscour_will_not_disable_its_own_entry():
@@ -68,6 +87,23 @@ def test_polyscour_will_not_disable_its_own_entry():
 def test_an_unnamed_entry_is_refused():
     reason = veto(item(name=""))
     assert reason and "cannot be addressed" in reason
+
+
+def _stub_helper(monkeypatch, asked, *, ok, detail=""):
+    """Answer for the elevated helper without launching anything.
+
+    tests/conftest.py already makes a real launch fail loudly; this is what a
+    test that *expects* to consult the helper installs instead.
+    """
+    from polyscour.elevation.protocol import Response
+    import polyscour.elevation.client as client
+
+    def answer(op, **kw):
+        asked.append(kw)
+        return Response(ok, detail or ("enabled" if kw.get("enabled") else
+                                       "disabled"))
+
+    monkeypatch.setattr(client, "request", answer)
 
 
 # ── the ordering ────────────────────────────────────────────────────────────
@@ -112,10 +148,45 @@ def test_a_refused_entry_is_neither_recorded_nor_written(monkeypatch):
     monkeypatch.setattr(service, "set_enabled",
                         lambda it, en: rec.events.append("write"))
 
-    result = service.apply_change(item(hive="HKLM", scope="machine"), False, rec)
+    result = service.apply_change(item(name="PolyScour"), False, rec)
 
     assert result.changed is False
     assert rec.events == []
+
+
+def test_a_machine_entry_goes_through_the_helper_and_never_the_local_write(
+        monkeypatch):
+    """The unelevated write would fail with an access error the user then has
+    to interpret. It is not attempted."""
+    rec = _Recorder()
+    monkeypatch.setattr(service, "set_enabled",
+                        lambda it, en: pytest.fail("wrote HKLM unelevated"))
+    asked: list[dict] = []
+    _stub_helper(monkeypatch, asked, ok=True)
+
+    result = service.apply_change(item(hive="HKLM", scope="machine"), False, rec)
+
+    assert result.changed is True
+    assert result.elevated is True
+    assert asked[0]["value_name"] == "Updater"
+    assert asked[0]["expected_raw_value"] == item().entry.raw_value, (
+        "the helper must be told what the entry launches, so it can refuse a "
+        "substituted target for itself rather than trusting this process")
+
+
+def test_a_declined_prompt_closes_the_row_it_opened(monkeypatch):
+    """Same handling as a refused registry write, deliberately: a declined
+    prompt and a rejected write differ in cause, not in what is now true.
+    History must not assert a change that did not happen."""
+    rec = _Recorder()
+    _stub_helper(monkeypatch, [], ok=False,
+                 detail="administrator rights were not granted")
+
+    result = service.apply_change(item(hive="HKLM", scope="machine"), False, rec)
+
+    assert result.changed is False
+    assert "not granted" in result.reason
+    assert rec.events == ["record:Updater", "reverted:1"]
 
 
 def test_a_refused_write_closes_its_own_row(monkeypatch):
@@ -147,13 +218,13 @@ def test_setting_a_state_it_is_already_in_does_nothing(monkeypatch):
 
 def test_the_veto_runs_again_at_write_time(monkeypatch):
     """The list a user is looking at was built earlier, and the registry is
-    shared — an entry can have moved hive since. Same reason authorize() is
+    shared — an entry can have been renamed since. Same reason authorize() is
     called twice."""
     rec = _Recorder()
     monkeypatch.setattr(service, "set_enabled",
                         lambda it, en: rec.events.append("write"))
 
-    service.apply_change(item(hive="HKLM", scope="machine"), False, rec)
+    service.apply_change(item(name="PolyScour"), False, rec)
     assert rec.events == []
 
 

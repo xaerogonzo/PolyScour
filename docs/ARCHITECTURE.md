@@ -192,15 +192,59 @@ off the wire; it proves nothing.
 
 The helper also refuses directories outright. A recursive delete at
 administrator privilege driven by a caller-supplied path is the most dangerous
-thing it could offer, and nothing needs it — the executor sends individual files.
+thing it could offer, and nothing needs it.
+
+### The batched operation, and why it is the narrow one
+
+`DELETE_APPROVED_PATHS_FOR_RULE` takes a rule id and the user's exclusions. It
+takes **no path**: the helper resolves the rule's permitted roots from its own
+`safety/policy.py` and walks them itself. So the operation covering hundreds of
+files is narrower than the one covering a single file — the caller loses the
+ability to name a target at all.
+
+It exists because per-file elevation is one UAC prompt per file, and
+`windows-temp` is several hundred files. See T19 and `docs/adr/0004`.
+
+Three things follow from the helper doing its own enumeration:
+
+- **The age floor moves into `PolicyEntry`.** The helper must not read
+  `rules/cleaners/*.json` to decide how much to delete: that is data the caller
+  could have rewritten. `min_age_days` is now a floor in reviewed code, which a
+  rule may raise and never lower — the mirror of how the ceilings already work.
+- **`authorize()` runs per item**, immediately before that item's `unlink()`.
+  Never once for the batch; hoisting it would collapse the TOCTOU protection
+  into one check with a long window behind it.
+- **The client's timeout becomes a *silence* timeout.** A batch can outlast any
+  fixed limit, and treating that as a dead helper is the dangerous failure: the
+  GUI reporting failure and re-scanning while an elevated process is still
+  deleting. The helper heartbeats; the clock resets on it. A cancel sentinel
+  file goes the other way.
 
 ### Nothing asks for elevation on its own
 
 `Executor(allow_elevation=False)` is the default and has no path to the helper.
-A caller sets it only after a person has agreed, which is what keeps
-`docs/THREAT_MODEL.md`'s "never requested speculatively" true rather than
-aspirational. Only `SkipReason.PERMISSION` is retried; every other failure is
-recorded as it was.
+The flag is **run-scoped**: `clean_view` builds a fresh `Executor` for an
+administrator retry rather than setting it on the shared one, so consent cannot
+outlive the click that gave it. There is no settings key, and there must never
+be one — a persisted "always elevate" is the retained elevation the threat
+model refuses.
+
+Only `SkipReason.PERMISSION` is retried. A locked file is in use, and
+administrator rights do not open it; offering to elevate for one would spend a
+prompt to achieve nothing.
+
+The offer appears **after** a run, never before, and names both what it will
+retry and what it will not — 412 needing administrator rights next to 23 in use
+must not read as 435 about to be handled.
+
+### The four elevation facts
+
+`ElevationRecord` carries requested / granted / attempted / succeeded rather
+than a boolean, because "elevated: yes" is untrue in both common failure paths:
+a declined prompt was requested and not granted, and a partial run was granted
+and did not finish. The ledger has a column for each, added to `operations` by
+an additive migration — `CREATE TABLE IF NOT EXISTS` does nothing to a database
+that already exists, and a history file must survive an upgrade intact.
 
 ### Still deferred
 
@@ -208,7 +252,29 @@ recorded as it was.
 "in 0.2, alongside the installer and the elevated helper". The helper now
 exists; the installer does not, and moving the vault to a machine-wide location
 without one would leave it somewhere an unelevated PolyScour cannot write. It
-stays where it is until the installer lands.
+stays where it is until the installer lands — and when that lands, the ADR's
+premise needs re-deriving rather than assuming: the helper is per-operation and
+does not persist, so it is not the privileged *owner* the ADR was waiting for.
+
+## The Startup Manager and privilege
+
+`startup/policy.py` answers two questions that used to be one string:
+
+```
+veto(item)                may this change at all?     absolute, any privilege
+requires_elevation(item)  what would it cost?         a prompt, not a refusal
+```
+
+A cost is something a user can choose to pay. Machine-wide entries are no
+longer refused; they route through `SET_MACHINE_STARTUP_APPROVAL`, which
+re-applies the absolute vetoes at privilege, compares `expected_raw_value`
+against what the entry launches now, writes, and **reads back** — because
+`SetValueEx` returning without error is not evidence the value is what was
+asked for.
+
+`startup_view` runs an elevated toggle through `run_off_thread`. The UAC prompt
+is modal to the desktop rather than to us, so doing it inline freezes the window
+behind the dialog and Windows paints it as "not responding".
 ## Threading
 
 Tk is not thread-safe. One rule covers it:

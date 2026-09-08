@@ -273,15 +273,28 @@ only thing that knows how to put it back.
 
 `startup/policy.py` is the authority, in the same shape as the other two:
 
+It answers two questions, deliberately kept apart. `veto()` is absolute and
+holds at any privilege level:
+
 | Refusal | Why |
 |---|---|
-| `scope != "user"` | `HKLM` affects every account and needs rights 0.1 does not have |
 | PolyScour's own entry | A product that can switch off its own autorun can make itself unfindable |
 | An entry with no name | It cannot be addressed reliably, so it cannot be changed safely |
 
-Machine-wide entries are **listed and refused**, not hidden. Hiding them would
-make the screen a misleading account of what starts up; refusing with a reason
-tells the user something true.
+`requires_elevation()` reports a **cost**, not a refusal:
+
+| Cost | Why |
+|---|---|
+| `scope != "user"` | `HKLM` affects every account, so changing it asks for administrator rights |
+
+A cost is something a user can choose to pay; a refusal is not. Collapsing them
+into one string — which is what this file described until the helper landed —
+either hides an available action or offers an impossible one.
+
+Machine-wide entries are listed, switchable, and honest about what changing one
+means. Hiding them would make the screen a misleading account of what starts
+up. That they are no longer *refused* is a real loss of a limit, weighed and
+recorded in `THREAT_MODEL.md` T14 rather than presented as a free improvement.
 
 ### Order, and what undo checks
 
@@ -296,6 +309,17 @@ An installer rewriting a `Run` value between the change and the undo is
 ordinary, and re-enabling it anyway would restore a decision the user never
 made, using PolyScour to do it. A mismatch is reported and the record stays
 open.
+
+For a machine-wide entry that comparison happens **twice**: once here, to keep
+a pointless prompt off the screen, and once inside the helper, which is the
+copy that matters because it is the only one a compromised GUI cannot reach.
+The helper is sent what the entry launched when we looked; like an exclusion,
+that can only ever cause a refusal, which is what makes it safe to accept from
+an untrusted caller.
+
+The write is then **read back**. `SetValueEx` returning without error is not
+evidence the value is what was asked for, and "verify rather than assume" is
+what the cleaning path already does when it re-scans afterwards.
 
 ## What is tested
 
@@ -314,3 +338,29 @@ open.
 - a locked file and a read-only file are skipped and **survive**
 - a junction planted between scan and execution is refused at execution
 - `dry_run=True` writes nothing, asserted by tree snapshot
+
+`tests/test_elevation.py`, for the boundary the helper is:
+
+- an excluded path is refused **at privilege** — the negative control for the
+  whole exclusion-crossing design, and the one that failed before it existed
+- an exclusion protects descendants, and survives being written with the wrong
+  case, a trailing separator, `.` or `..` segments
+- the request the executor sends contains a rule id and no path, ever
+- an unknown rule id is refused before anything is walked
+- a file younger than the **policy's** age floor is not deleted, even though the
+  rule file could have said otherwise
+- cancelling stops between items, and what was deleted stays deleted
+- the staging directory is removed on all six exit paths, including the error
+  ones nobody exercises by hand
+- a helper reporting progress does not trip the timeout; a silent one does
+
+`tests/test_ledger.py`, because a history file must survive an upgrade:
+
+- a 0.1 database opens, keeps its rows, and gains the new columns
+- migrating repeatedly changes nothing
+
+`tests/conftest.py` refuses to let any test launch the real helper. Three tests
+reached `ShellExecute("runas")` for real during this work — a UAC prompt raised
+by `pytest`, which is exactly the speculative elevation the threat model
+forbids, and worse than the ordinary kind because a prompt that appears while
+someone is doing something else is a prompt they will click away.

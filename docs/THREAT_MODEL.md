@@ -169,10 +169,19 @@ before the code.
 value. So the worst a bug here can do is switch something on or off — it cannot
 change *what* an entry launches, and it cannot destroy one.
 
-`startup/policy.py` refuses `HKLM` (every account, needs elevation), PolyScour's
-own entry, and unnamed entries. The veto runs again immediately before the
-write, because the list a user is looking at was built earlier and the registry
-is shared.
+`startup/policy.py` now answers two different questions. `veto()` refuses
+absolutely — PolyScour's own entry, and unnamed entries — and those stay refused
+at any privilege, because neither becomes acceptable with administrator rights.
+`requires_elevation()` reports a *cost*: machine-wide entries can be changed,
+through the helper, after a prompt. Collapsing a cost and a refusal into one
+string either hides an available action or offers an impossible one.
+
+Both run again immediately before the write, because the list a user is looking
+at was built earlier and the registry is shared. For a machine-wide entry the
+absolute vetoes run **a third time, inside the helper**, along with a comparison
+of what the entry launches against what the GUI saw and a read-back afterwards:
+`SetValueEx` returning without error is not evidence the value is what was
+asked for.
 
 **Undo is guarded against a substituted target.** Between a change and its undo,
 an installer can rewrite the `Run` value. Re-enabling it then would restore a
@@ -181,16 +190,43 @@ at change time is compared, and a mismatch refuses rather than writes.
 
 ### T14 — The Startup Manager is used to make a machine less safe
 
-**Partially mitigated, and stated honestly.** A user can disable their own
-security software's user-scope autorun; PolyScour lists it like anything else.
-Two things limit the damage and one does not:
+**Less mitigated than it was, and this section says so rather than being
+quietly left as it stood.**
 
-- `HKLM` entries — where most security software registers — are refused outright.
+A user can disable their own security software's autorun; PolyScour lists it
+like anything else. Until the elevated helper, one of the three things limiting
+that was a blanket refusal:
+
+> ~~`HKLM` entries — where most security software registers — are refused
+> outright.~~
+
+**That mitigation is gone.** Machine-wide entries now have a working switch,
+and the screen this feature is demonstrated against contains
+`SecurityHealth` — Windows Security's own machine-wide autorun. Pretending
+otherwise because the refusal was convenient to cite would be exactly the
+invented reassurance this product exists to avoid.
+
+What is left:
+
+- **A UAC prompt stands between the click and the change**, and the operation
+  is one Windows itself gates on administrator consent. Someone who can grant
+  that can already do this in Task Manager, `regedit`, or Autoruns.
 - Nothing is pre-selected and nothing is recommended, so a disable is always an
-  explicit act rather than a consequence of clicking *Apply*.
-- **Not mitigated:** a determined user can still switch off a user-scope entry.
-  That is the same authority they already have in Task Manager, and a
-  maintenance tool that silently refused would be lying about what it does.
+  explicit act rather than a consequence of clicking *Apply*. This is the one
+  that does most of the work, and it is a **product** decision rather than a
+  technical control: PolyScour never suggests turning anything off, so it never
+  becomes the tool that talked someone into it.
+- The `Run` value itself is still never written, so a disable stays a state
+  transition that Task Manager displays and can reverse.
+
+**Not mitigated:** a determined user with administrator rights can switch off
+machine-wide security software from this screen. That is authority they already
+had, and a maintenance tool that silently refused a change Windows permits
+would be lying about what it does — but the refusal was doing real work as a
+speed bump, and removing it is a cost, not a free improvement. Weighed against
+`windows-temp` and machine-wide entries being permanently unusable, it was
+judged worth paying; that judgement is recorded here so it can be revisited
+rather than rediscovered.
 
 ## The elevated helper
 

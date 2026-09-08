@@ -14,19 +14,27 @@ answers only **may this be changed**, never **should it be**. Nothing here
 scores, ranks, or produces a recommended set, and the interface above it does
 not pre-select.
 
-Machine-wide entries are read, reported, and refused
-----------------------------------------------------
+Two different refusals, kept apart
+----------------------------------
 
-``HKLM`` Run values affect every account on the machine, and writing that hive
-needs administrator rights that 0.1 does not have. They are still listed --
-hiding them would make the screen a misleading account of what starts up -- but
-the switch is refused with a reason, rather than offered and then failing with
-an access error the user has to interpret.
+There are entries this module will **never** let anything change, and entries
+it will change **only at administrator privilege**. Collapsing those into one
+string was right while nothing could elevate, and became wrong the moment
+something could.
 
-That refusal is a **policy** decision, not a capability one. When the elevated
-helper arrives it will not simply lift this: raising privilege to change what
-runs for every user on a machine is precisely the operation that wants a
-narrow, named, server-validated API rather than a flag flipped here.
+    veto()                may this be changed at all?     absolute
+    requires_elevation()  what would it take?             a cost, not a refusal
+
+``HKLM`` Run values affect every account on the machine. They are listed --
+hiding them would make the screen a misleading account of what starts up -- and
+now they can be changed, through the narrow, named, server-validated operation
+the earlier version of this docstring said the job wanted. It is
+``SET_MACHINE_STARTUP_APPROVAL``, and it re-checks everything here for itself.
+
+PolyScour's own entry and unnamed entries stay in ``veto()``, because neither
+becomes acceptable at higher privilege. A product that can switch off its own
+autorun has a way to make itself un-restorable by a user who then cannot find
+it, and that is as true with administrator rights as without.
 """
 from __future__ import annotations
 
@@ -59,10 +67,6 @@ def veto(item: StartupItem) -> str | None:
     Reports the most fundamental refusal first, so the reason shown is the one
     that would still apply if the others were resolved.
     """
-    if item.scope != "user":
-        return ("machine-wide entries affect every account and need "
-                "administrator rights, which PolyScour 0.1 does not use")
-
     if is_own_entry(item.entry.value_name):
         return "PolyScour will not disable its own startup entry"
 
@@ -72,8 +76,29 @@ def veto(item: StartupItem) -> str | None:
     return None
 
 
+def requires_elevation(item: StartupItem) -> str | None:
+    """What it would cost to change this, or ``None`` if nothing.
+
+    Deliberately not part of :func:`veto`. A cost is something a user can
+    choose to pay; a refusal is not, and showing them as the same thing either
+    hides an available action or offers an impossible one.
+
+    The string is shown next to the switch rather than in place of it, because
+    "affects every account on this machine" is a fact worth reading *before*
+    flipping it, not merely an explanation for why it is greyed out.
+    """
+    if item.scope != "user":
+        return ("machine-wide: affects every account, and needs "
+                "administrator rights")
+    return None
+
+
 def changeable(items: list[StartupItem]) -> list[StartupItem]:
-    """The subset whose switch may be flipped. Never raises."""
+    """The subset whose switch may be flipped. Never raises.
+
+    Says nothing about privilege — an entry needing administrator rights is
+    still changeable, it just costs a prompt.
+    """
     return [i for i in items if veto(i) is None]
 
 

@@ -24,7 +24,8 @@ from polybedrock import settings as cfg
 from polybedrock.ui import theme
 
 from polyscour.cleaning import planner
-from polyscour.contracts import RiskLevel
+from polyscour.cleaning.executor import Executor
+from polyscour.contracts import RiskLevel, SkipReason
 from polyscour.views.dashboard_view import human
 
 _RISK_COLOUR = {
@@ -34,6 +35,45 @@ _RISK_COLOUR = {
     RiskLevel.HIGH: "#f7768e",
     RiskLevel.CRITICAL: "#ff5555",
 }
+
+
+def _by_reason(result, reason) -> list:
+    if result is None:
+        return []
+    return [s for s in result.skips if s.reason is reason]
+
+
+def _describe(result) -> list[str]:
+    """The result, with each kind of skip named separately.
+
+    "in use or need administrator rights" was one sentence covering two facts,
+    only one of which a user can do anything about. Merging them made the
+    actionable half invisible.
+    """
+    lines = [result.summary()]
+
+    if result.hard_failures:
+        names = sorted({s.path.name for s in result.hard_failures if s.path.name})
+        lines.append(f"{len(result.hard_failures)} failed unexpectedly"
+                     + (": " + ", ".join(names[:5]) if names else "."))
+
+    locked = _by_reason(result, SkipReason.LOCKED)
+    if locked:
+        lines.append(f"{len(locked):,} were in use by another program and were "
+                     f"left alone.")
+
+    blocked = _by_reason(result, SkipReason.PERMISSION)
+    if blocked:
+        lines.append(f"{len(blocked):,} need administrator rights.")
+
+    vanished = _by_reason(result, SkipReason.VANISHED)
+    if vanished:
+        lines.append(f"{len(vanished):,} were already gone.")
+
+    if result.elevation.requested:
+        lines.append(result.elevation.describe())
+
+    return lines
 
 
 class CleanView(ctk.CTkFrame):
@@ -93,6 +133,18 @@ class CleanView(ctk.CTkFrame):
         self.clean_btn = ctk.CTkButton(footer, text="Preview", width=150,
                                        state="disabled", command=self._clean)
         self.clean_btn.grid(row=0, column=2)
+
+        # Hidden until a run actually produces something administrator rights
+        # would fix. Never a standing offer: a button that is always there is
+        # an invitation to elevate speculatively.
+        self.retry_btn = ctk.CTkButton(footer, text="", width=220,
+                                       fg_color=theme.color("card2"),
+                                       command=self._retry_elevated)
+        self.retry_btn.grid(row=0, column=3, padx=(8, 0))
+        self.retry_btn.grid_remove()
+        self._retry_rules: list[str] = []
+        self._last_result = None
+        self._plan = None
 
     # ── scanning ─────────────────────────────────────────────────────────────
 
@@ -239,7 +291,12 @@ class CleanView(ctk.CTkFrame):
         if not plan.dry_run and not self._confirm(plan):
             return
 
+        # Kept so an administrator retry re-runs the plan the user approved,
+        # rather than re-deriving one from a selection that may have changed.
+        self._plan = plan
+
         self.clean_btn.configure(state="disabled")
+        self.retry_btn.grid_remove()
         self.app.set_status("Previewing" if plan.dry_run else "Cleaning")
         self.app.run_off_thread(
             lambda: self.app.services.executor.execute(plan), self._cleaned)
@@ -267,16 +324,85 @@ class CleanView(ctk.CTkFrame):
             self.app.set_status("Cleanup failed")
             return
 
-        text = result.summary()
-        if result.hard_failures:
-            text += (f"\n{len(result.hard_failures)} failed unexpectedly: "
-                     + ", ".join(sorted({s.path.name
-                                         for s in result.hard_failures})[:5]))
-        if result.benign_skips:
-            text += (f"\n{len(result.benign_skips):,} skipped because they were "
-                     f"in use or need administrator rights.")
-        self.summary.configure(text=text)
+        self._last_result = result
+        self.summary.configure(text="\n".join(_describe(result)))
         self.app.set_status(result.outcome.value.replace("_", " ").capitalize())
+        self._offer_elevation(result)
 
         if not result.dry_run:
             self._scan()          # verify by re-scanning rather than by assuming
+
+    # ── the administrator offer ──────────────────────────────────────────────
+
+    def _offer_elevation(self, result) -> None:
+        """Offer a retry for the items administrator rights would actually fix.
+
+        Deliberately *after* a run and never before one. There is no pre-flight
+        checkbox, no Settings key, and no way to arrive at a UAC prompt without
+        having first seen what it is for — docs/THREAT_MODEL.md T18, where the
+        specific consent lives in this screen because the prompt itself only
+        names PolyScour.
+
+        Only permission failures are offered. A locked file is in use, and
+        administrator rights do not open it; offering to elevate for one would
+        spend a prompt to achieve nothing.
+        """
+        self.retry_btn.grid_remove()
+        if result.dry_run:
+            return
+
+        blocked = _by_reason(result, SkipReason.PERMISSION)
+        if not blocked:
+            return
+
+        rules = sorted({s.rule_id for s in blocked if s.rule_id})
+        self._retry_rules = rules
+        self.retry_btn.configure(
+            text=f"Retry {len(blocked):,} as administrator")
+        self.retry_btn.grid()
+
+    def _retry_elevated(self) -> None:
+        plan = self._plan
+        if plan is None:
+            return
+        if not self._confirm_elevation():
+            return
+
+        self.retry_btn.grid_remove()
+        self.clean_btn.configure(state="disabled")
+        self.app.set_status("Waiting for administrator rights")
+
+        # A fresh Executor rather than the shared one: allow_elevation is
+        # run-scoped and consented, so it must not outlive this click. An
+        # Executor that kept the flag would be able to raise a prompt on some
+        # later run the user never agreed to.
+        executor = Executor(vault=self.app.services.vault,
+                            ledger=self.app.services.ledger,
+                            guard=self.app.services.guard,
+                            allow_elevation=True)
+        self.app.run_off_thread(lambda: executor.execute(plan), self._cleaned)
+
+    def _confirm_elevation(self) -> bool:
+        """Say what will be retried, what will not, and which mechanism."""
+        blocked = _by_reason(self._last_result, SkipReason.PERMISSION)
+        others = [s for s in self._last_result.skips
+                  if s.reason is not SkipReason.PERMISSION]
+
+        lines = [f"{len(blocked):,} items need administrator rights and will "
+                 f"be retried:"]
+        for rule_id in self._retry_rules:
+            count = sum(1 for s in blocked if s.rule_id == rule_id)
+            lines.append(f"  • {rule_id} — {count:,} items")
+        if others:
+            # Naming what will NOT be retried is the same discipline as
+            # refusing invented numbers: the honest figure is the one the
+            # action actually covers, not the total that was skipped.
+            lines.append(f"\n{len(others):,} other items were skipped for "
+                         f"reasons administrator rights do not fix (in use, "
+                         f"or already gone) and will not be retried.")
+        lines.append("\nWindows will ask you to confirm, once per rule.")
+
+        dialog = ctk.CTkInputDialog(
+            title="Retry as administrator",
+            text="\n".join(lines) + "\n\nType ADMIN to confirm:")
+        return (dialog.get_input() or "").strip().upper() == "ADMIN"
