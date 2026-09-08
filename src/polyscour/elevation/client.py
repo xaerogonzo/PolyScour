@@ -179,6 +179,37 @@ def _read_progress(path: Path) -> "str | None":
         return None
 
 
+def _is_safe_to_elevate(executable: Path) -> bool:
+    """Whether this image lives somewhere only an administrator can rewrite.
+
+    Only asked of a **frozen** build. A source checkout elevates the venv's
+    python.exe, which is user-writable by construction and always will be --
+    running from source is a development posture, and T15 already says a
+    release must be installed rather than unzipped.
+
+    Probed by trying to write, not by reading the DACL. ``os.access(..., W_OK)``
+    on Windows reports the read-only *attribute* and knows nothing about ACLs,
+    so it would answer "writable" for a directory nobody can write and
+    "writable" for one everybody can. The only honest question is whether this
+    process can actually create a file there.
+    """
+    from polyscour import paths
+
+    if not paths.is_frozen():
+        return True
+
+    directory = executable.parent
+    probe = directory / f".polyscour-elevation-probe-{os.getpid()}"
+    try:
+        probe.touch(exist_ok=False)
+    except OSError:
+        return True          # cannot write here: this is the good outcome
+    try:
+        probe.unlink()
+    except OSError:          # pragma: no cover - defensive
+        pass
+    return False
+
 def _launch(request_path: Path) -> bool:
     """ShellExecute the helper with ``runas``. False if the user declined.
 
@@ -189,6 +220,18 @@ def _launch(request_path: Path) -> bool:
     import ctypes
 
     executable, args = _helper_command(request_path)
+
+    # Fail closed if the thing about to be elevated sits somewhere an ordinary
+    # process can rewrite it. This is defence in depth behind
+    # paths.running_executable(), and it exists because the bug it guards
+    # against shipped in a form nothing could catch from source: sys.executable
+    # under onefile is a python.exe in %TEMP%, and elevating that hands
+    # administrator rights to whatever an attacker swapped in first. T23.
+    if not _is_safe_to_elevate(Path(executable)):
+        raise PermissionError(
+            f"refusing to elevate {executable}: its directory is writable by "
+            f"an ordinary user, so what runs as administrator would not "
+            f"necessarily be PolyScour")
 
     # SW_HIDE: the helper has no UI, and a console window flashing up during a
     # clean looks like something went wrong.

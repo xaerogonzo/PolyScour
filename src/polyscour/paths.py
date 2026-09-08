@@ -31,6 +31,7 @@ named 0002, which is a different decision entirely).
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from polybedrock import paths as _wf
@@ -91,6 +92,40 @@ def resource_root() -> Path:
     """
     here = Path(__file__).resolve()
     return here.parents[1] if is_frozen() else here.parents[2]
+
+
+def running_executable() -> Path:
+    r"""The binary the user actually launched. **Never** ``sys.executable``.
+
+    Measured inside a real onefile build, not reasoned about:
+
+        sys.executable              %TEMP%\onefile_<n>\python.exe
+        sys.argv[0]                 <install>\PolyScour.exe
+        __compiled__.original_argv0 <install>\PolyScour.exe
+
+    Why this is a security property and not a tidiness one
+    ------------------------------------------------------
+
+    The onefile extraction directory lives under ``%LOCALAPPDATA%\Temp`` and is
+    **writable by the user** — measured too. Elevating ``sys.executable`` would
+    therefore hand ``ShellExecute("runas", ...)`` a path that anything running
+    as that user can replace between extraction and the consent prompt. The
+    prompt would say PolyScour, and the code that ran as administrator would be
+    whatever was swapped in.
+
+    That is exactly the escalation T15's program-directory ACLs exist to
+    prevent, defeated by pointing the launcher somewhere else entirely. See
+    T23.
+
+    ``original_argv0`` is preferred over ``sys.argv[0]`` because onefile
+    re-executes the extracted binary: ``argv[0]`` can then be the temporary
+    copy, while ``original_argv0`` stays the executable that was launched.
+    """
+    if is_frozen():
+        compiled = globals().get("__compiled__", None)
+        original = getattr(compiled, "original_argv0", None)
+        return Path(original or sys.argv[0]).resolve()
+    return Path(sys.executable).resolve()
 
 
 def rules_dir() -> Path:

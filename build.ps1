@@ -5,14 +5,17 @@
 #
 # Produces standalone .exe files in dist\ with no Python install required.
 #
-# STATUS: NOT YET RUN on this machine (Nuitka is not installed in venv/), but
-# no longer knowingly wrong. This note used to say packaging lands in 0.9,
-# which stopped being true the moment the elevated helper shipped: T15 requires
-# an installed location only administrators can write, and the helper's frozen
-# launch path cannot be honest without a frozen build to launch. Packaging is
-# 0.2. See docs/adr/0006.
+# STATUS: RUN, on 2026-09-08, with Nuitka 4.2.1 / zig 0.16.0 on Python 3.13.
+# Produces PolyScour.exe at ~15.5 MB (58.9 MB uncompressed payload). The GUI
+# starts and shows its window; the elevated helper answers a request and writes
+# its response; an unknown argument exits 2. See docs/adr/0006 for what the
+# build measured and what it found.
 #
-# Fixed here since that note was written:
+# The first run found a privilege escalation that four rounds of reasoning had
+# missed -- sys.executable under onefile names a python.exe in a user-writable
+# temp directory, and that is what was being elevated. THREAT_MODEL.md T23.
+#
+# Fixed here since this note first claimed packaging was a 0.9 concern:
 #   - the entry point is entry.py, not app.py. app.py imports CustomTkinter at
 #     module scope, and this same executable also runs the ELEVATED helper --
 #     so entering through app.py would load a GUI toolkit as administrator.
@@ -42,12 +45,37 @@ $ICON = "$ROOT\icon.ico"
 
 # ---------- Pre-flight checks ------------------------------------------------
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    throw "python is not on PATH. Activate your venv or install Python first."
+# Prefer the project's own venv over whatever `python` happens to mean.
+#
+# This is not politeness. Nuitka compiles the environment it is RUN from, so a
+# bare `python` that resolves to a system or Anaconda install produces either a
+# "No module named polyscour" failure or -- worse, if that interpreter happens
+# to have some of the dependencies -- a build made from the wrong ones. The
+# original script only said "activate your venv" in an error message that never
+# fires, because `python` is almost always on PATH and almost never the venv.
+$PYTHON = "$ROOT\venv\Scripts\python.exe"
+if (-not (Test-Path $PYTHON)) {
+    $fallback = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $fallback) {
+        throw "No venv at $PYTHON and no python on PATH. Create the venv first: " +
+              "python -m venv venv"
+    }
+    $PYTHON = $fallback.Source
+    Write-Host "WARNING: no venv found; building with $PYTHON" -ForegroundColor Yellow
+}
+
+Write-Host "Interpreter: $PYTHON" -ForegroundColor Cyan
+
+# It has to be able to import what it is about to compile. Checked here rather
+# than discovered fifteen minutes into a Nuitka run.
+& $PYTHON -c "import polyscour, polybedrock" 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "$PYTHON cannot import polyscour and polybedrock. Install them: " +
+          "pip install -e ..\PolyBedrock\core -e ..\PolyBedrock\ui -e ."
 }
 
 # Check Nuitka is installed (cheap version probe)
-& python -m nuitka --version 2>&1 | Out-Null
+& $PYTHON -m nuitka --version 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "Nuitka is not installed. Run: pip install nuitka ordered-set zstandard"
 }
@@ -91,7 +119,7 @@ function Build-Exe($script, $outName, $nuArgs) {
     # Nuitka writes progress to stderr, so we must use Continue while capturing.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $buildOutput = & python @nuArgs $script 2>&1
+    $buildOutput = & $PYTHON @nuArgs $script 2>&1
     $nuitkaExit = $LASTEXITCODE
     $ErrorActionPreference = $prevEAP
 

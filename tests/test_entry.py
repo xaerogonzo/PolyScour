@@ -13,6 +13,7 @@ Every development run would have passed.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -387,6 +388,84 @@ def test_child_argv_is_the_one_place_the_frozen_question_is_asked(frozen):
     assert child_argv(HELPER_FLAG, "r.json")[:3] == [
         sys.executable, "-m", "polyscour.entry"]
 
+    from polyscour import paths
+
     frozen(True)
     assert child_argv(SUPERVISOR_FLAG, "1", "2.0") == [
-        sys.executable, SUPERVISOR_FLAG, "1", "2.0"]
+        str(paths.running_executable()), SUPERVISOR_FLAG, "1", "2.0"]
+
+
+
+# ── what gets elevated ──────────────────────────────────────────────────────
+
+def test_a_frozen_child_is_launched_from_the_real_executable(frozen,
+                                                             monkeypatch):
+    r"""T23. Measured inside a real onefile build, not reasoned about:
+
+        sys.executable              %TEMP%\onefile_<n>\python.exe
+        __compiled__.original_argv0 <install>\PolyScour.exe
+
+    One of the callers of ``child_argv`` elevates what it is handed, and the
+    extraction directory is writable by the user. Naming ``sys.executable``
+    there would let anything running as that user replace the binary between
+    extraction and the consent prompt — with PolyScour's name on the dialog.
+    """
+    from polyscour import paths
+    from polyscour.entry import HELPER_FLAG, child_argv
+
+    fake_exe = Path(r"C:\Program Files\PolyScour\PolyScour.exe")
+    monkeypatch.setattr(paths, "running_executable", lambda: fake_exe)
+    frozen(True)
+
+    argv = child_argv(HELPER_FLAG, "r.json")
+
+    assert argv[0] == str(fake_exe)
+    assert "Temp" not in argv[0]
+
+
+def test_elevation_is_refused_when_the_image_sits_somewhere_writable(
+        frozen, monkeypatch, tmp_path):
+    """Defence in depth behind running_executable().
+
+    The bug this guards against shipped in a form nothing could catch from
+    source. If it ever comes back, this makes it fail closed instead of
+    escalating.
+    """
+    import polyscour.elevation.client as client
+
+    writable = tmp_path / "onefile_12345"
+    writable.mkdir()
+    exe = writable / "python.exe"
+    exe.write_text("not really", encoding="utf-8")
+
+    frozen(True)
+    monkeypatch.setattr(client, "_helper_command",
+                        lambda path: (str(exe), "--elevated-helper x"))
+    monkeypatch.setattr(
+        client, "ShellExecuteW_should_never_be_reached", None, raising=False)
+
+    assert client._is_safe_to_elevate(exe) is False
+
+
+def test_an_administrator_only_directory_is_safe_to_elevate(frozen):
+    """The control. A check that refuses everything protects nothing, and
+    would take the feature down instead of the attack."""
+    import polyscour.elevation.client as client
+
+    frozen(True)
+    program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    candidate = program_files / "Windows Defender" / "MsMpEng.exe"
+    if not candidate.parent.is_dir():
+        pytest.skip("no administrator-only directory available to test with")
+
+    assert client._is_safe_to_elevate(candidate) is True
+
+
+def test_a_source_checkout_is_never_refused(frozen):
+    """Running from source elevates the venv's python.exe, which is
+    user-writable by construction. That is a development posture, and T15
+    already says a release must be installed rather than unzipped."""
+    import polyscour.elevation.client as client
+
+    frozen(False)
+    assert client._is_safe_to_elevate(Path(sys.executable)) is True
