@@ -101,6 +101,9 @@ tests/conftest.py     Makes a REAL UAC prompt, or a REAL supervisor spawn,
                       from the suite fail loudly.
 build.ps1             Nuitka onefile -> probe -> installer. Entry is
                       entry.py, NOT app.py.
+tools/verify_install.ps1  What a REAL installation became. Refuses to run
+                      elevated -- an administrator would pass every
+                      check while measuring nothing (T15, T24)
 tools/build_probe.py  How a REAL build resolves its paths. The suite cannot
                       check the detection, only the policy.
 installer/            polyscour.iss + set_program_acls.ps1. The ACLs are the
