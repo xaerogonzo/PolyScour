@@ -398,6 +398,11 @@ script exists because "already, by default, probably" is not a boundary: an
 install into a non-default directory inherits whatever ACL its parent had, and
 nothing would report it.
 
+**None of it helps if the elevated process is not the installed one.** That was
+T23, and it is why the two are worth reading together: protecting the program
+directory and elevating something outside it are independently plausible and
+jointly useless.
+
 **It is verified in both directions, and the verification only counts
 unelevated.** `-Verify` inspects the DACL, and when run as an ordinary user
 also *tries to cross the boundary*: it must fail to write into the program
@@ -493,6 +498,71 @@ untrusted caller; nothing that could add to it ever is.
 Without this, a path the user explicitly protected would be honoured on the
 unelevated path and deleted on the elevated one — the setting would mean two
 different things depending on which privilege level happened to reach the file.
+
+### T23 — The elevated process is not the binary that was installed
+
+**Found by the first real build, and it had shipped in every line of reasoning
+before it.**
+
+`_helper_command()` named `sys.executable` for a frozen build. Under Nuitka
+onefile that is not the installed executable. Measured:
+
+```
+sys.executable               %TEMP%\onefile_<n>\python.exe
+sys.argv[0]                  <install>\PolyScour.exe
+__compiled__.original_argv0  <install>\PolyScour.exe
+```
+
+The extraction directory is under `%LOCALAPPDATA%\Temp` and is **writable by
+the user** — measured too, in the same run.
+
+So `ShellExecute("runas", sys.executable, ...)` would have raised a consent
+prompt naming PolyScour for a binary that anything running as that user could
+replace first. Accepting the prompt would run the attacker's code as
+administrator.
+
+This defeats T15 completely and from the side: the program directory can be
+perfectly locked down, and it does not matter, because the thing being elevated
+was never in it.
+
+**Mitigated.** `paths.running_executable()` prefers
+`__compiled__.original_argv0`, falling back to `sys.argv[0]`, and is the only
+thing `entry.child_argv()` will launch. `sys.executable` is used only when not
+frozen, where it is the development interpreter and T15 does not apply.
+
+**Mitigated again, on purpose.** `elevation/client._launch()` refuses outright
+to elevate an image whose directory this process can write. It probes by
+attempting to create a file rather than by reading the DACL, because
+`os.access(..., W_OK)` on Windows reports the read-only attribute and knows
+nothing about permissions — it answers the wrong question in both directions.
+Two mitigations for one bug is deliberate: the first is correct and the second
+is what makes a regression fail closed instead of escalating.
+
+**Caught in future by `tools/build_probe.py`**, which now fails a build whose
+launch target is inside the extraction directory, or whose launch directory is
+writable. Frozen-only: in a checkout the venv lives under the repo root, and a
+probe that cries wolf on every developer run is one nobody reads on the run
+that matters.
+
+### The lesson, recorded because it is the fourth of its kind
+
+Four bugs in this family have now been found, and every one of them was
+invisible from source and harmless in development:
+
+| | |
+|---|---|
+| `sys.frozen` | Nuitka does not set it; the frozen branch never ran |
+| `parents[2]` | a build has no `src/` level; rules were never found |
+| bare `python` in `build.ps1` | compiled the wrong interpreter's environment |
+| `sys.executable` | **elevated a binary in a user-writable temp directory** |
+
+The first three were correctness failures. The fourth was a privilege
+escalation, and the only reason it is in this table rather than in a release is
+that something was compiled and run.
+
+**Reasoning about a packaged build is not evidence about a packaged build.**
+`tools/build_probe.py` exists to turn that into a gate, and `build.ps1` fails
+on it.
 
 ## The Game Mode supervisor
 

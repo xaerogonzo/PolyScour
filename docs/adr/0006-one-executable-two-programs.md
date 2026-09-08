@@ -142,14 +142,52 @@ never does.
   predicate that always answered the same way would satisfy each mode's test
   separately, which is how this bug survived having a branch for it.
 
-## What is still unverified
+## What the first real build did
 
-No build has been run: Nuitka is not installed in `venv/`. Everything above is
-argued from the source and tested at the seams — the argument dispatch, both
-`_helper_command` branches, the import surface of the elevated process, and
-that the data root does not move when frozen.
+*Updated 2026-09-08. Nuitka 4.2.1, zig 0.16.0, Python 3.13, `--onefile`.*
 
-The remaining unknowns are Nuitka's, not this project's: whether `tk-inter`
-plus `--include-package=polybedrock` produces a working GUI, and what the
-onefile payload weighs. Those need a machine with Nuitka on it, and this file
-should be updated with what the first real build actually did.
+It works, and it found something.
+
+**Confirmed:**
+
+| Claim | Result |
+|---|---|
+| `is_frozen()` returns True in a build | yes — the `__compiled__` check holds |
+| `resource_root()`'s level adjustment | correct: rules resolve, all eight found |
+| the data root stays in `%LOCALAPPDATA%` | yes, and not under the extraction dir |
+| `--include-package=polybedrock` needed | yes; it is not traced without it |
+| the GUI starts | yes — window titled PolyScour, ~72 MB working set |
+| the helper answers | yes — refuses an unknown rule, writes its response, exits 1 |
+| an unknown argument | exits 2 |
+| payload | 58.9 MB uncompressed, 15.5 MB on disk |
+
+**Found — see T23.** `sys.executable` under onefile is
+`%TEMP%\onefile_<n>\python.exe`, not the installed binary, and that directory
+is writable by the user. The frozen branch of `_helper_command()` was therefore
+about to `ShellExecute("runas", ...)` a path an ordinary process could replace
+first. Fixed with `paths.running_executable()`, plus a refusal in `_launch()`
+and a gate in the probe.
+
+Four bugs of this family have now been found and every one was invisible from
+source. The probe exists so the next one is caught by a machine rather than by
+a reader.
+
+## A consequence worth knowing: the build has no console
+
+`--windows-console-mode=disable` makes this a Windows-subsystem binary, so
+`print(..., file=sys.stderr)` reaches nobody. The usage text in `entry.py` is
+therefore invisible in a real build — someone who types a wrong argument gets
+exit code 2 and silence.
+
+That is acceptable rather than good: the command line is not a supported
+interface, and the two flags on it are launched by PolyScour itself. It is
+recorded here so nobody assumes the usage message is doing work it cannot do.
+The elevated helper is unaffected — it answers in a *file*, precisely because
+a process launched by `ShellExecute("runas")` has no inherited pipes.
+
+## Still not done
+
+The installer is not compiled: Inno Setup is not installed on this machine, and
+`build.ps1` says so and continues rather than failing. `installer/polyscour.iss`
+and the ACL script are reviewed and the verifier has been exercised against real
+directories, but no `PolyScour-Setup-*.exe` exists yet.

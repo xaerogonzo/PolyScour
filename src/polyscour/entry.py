@@ -63,7 +63,10 @@ def child_argv(flag: str, *args: str) -> list[str]:
     from polyscour import paths
 
     if paths.is_frozen():
-        return [sys.executable, flag, *args]
+        # running_executable(), NOT sys.executable. Under onefile the latter
+        # names a python.exe inside the user-writable extraction directory,
+        # and one of the callers here elevates what it is given. See T23.
+        return [str(paths.running_executable()), flag, *args]
     return [sys.executable, "-m", "polyscour.entry", flag, *args]
 
 _USAGE = f"""PolyScour — a transparent, evidence-based Windows maintenance suite.

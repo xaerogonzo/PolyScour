@@ -46,6 +46,27 @@ for _p in (_HERE.parent / "src",):
 from polyscour import paths  # noqa: E402  (after bootstrap)
 
 
+def _is_writable(directory: Path) -> bool:
+    """Whether this process can create a file here.
+
+    Probed rather than read from the DACL: ``os.access(..., W_OK)`` on Windows
+    reports the read-only attribute and knows nothing about permissions, so it
+    answers the wrong question in both directions.
+    """
+    import os as _os
+
+    probe = directory / f".polyscour-probe-{_os.getpid()}"
+    try:
+        probe.touch(exist_ok=False)
+    except OSError:
+        return False
+    try:
+        probe.unlink()
+    except OSError:
+        pass
+    return True
+
+
 def _is_within(child: Path, parent: Path) -> bool:
     try:
         child.resolve().relative_to(parent.resolve())
@@ -73,6 +94,9 @@ def collect(expect_frozen: bool) -> dict:
         rule_files = []
 
     findings: list[str] = []
+    #: True but not fatal. Kept apart from findings so `ok` keeps
+    #: meaning "this build is shippable" rather than "nothing to say".
+    notes: list[str] = []
 
     # 1. The detection itself. Only a compiled run can answer this, and it is
     #    the assumption every other answer here rests on.
@@ -106,7 +130,34 @@ def collect(expect_frozen: bool) -> dict:
     elif not rule_files:
         findings.append(f"the rules directory {rules} is empty.")
 
-    # 4. adr/0005: the vault stays user-scoped. A build must not relocate it.
+    # 4. WHAT WOULD BE ELEVATED. The finding this probe earned its place with:
+    #    under onefile, sys.executable names a python.exe inside the extraction
+    #    directory, and that directory is writable by the user. Elevating it
+    #    hands administrator rights to whatever an attacker swapped in first.
+    #
+    #    Both checks are frozen-only. In a checkout the venv lives under the
+    #    repo root, so "the launcher is inside the resource root" is true and
+    #    means nothing -- and a probe that cries wolf on every developer run is
+    #    a probe nobody reads on the run that matters.
+    launcher = paths.running_executable()
+    if frozen and _is_within(launcher, resource):
+        findings.append(
+            f"the launch target {launcher} is inside the extraction directory. "
+            f"ShellExecute(\"runas\") on it would elevate a binary an ordinary "
+            f"user can replace -- see THREAT_MODEL T23.")
+    # Writability of the launch directory is deliberately a NOTE, not a
+    # finding. A freshly built exe sits in dist\, which is always writable --
+    # gating on it would fail every build that ever runs, which is a gate
+    # nobody can keep. Whether the SHIPPED location is administrator-only is
+    # the installer's question, and installer\set_program_acls.ps1 -Verify
+    # answers it where the answer means something.
+    if frozen and _is_writable(launcher.parent):
+        notes.append(
+            f"{launcher.parent} is writable by this user, as an uninstalled "
+            f"build's directory always is. T15 is satisfied by installing, "
+            f"not by building -- check it with set_program_acls.ps1 -Verify.")
+
+    # 5. adr/0005: the vault stays user-scoped. A build must not relocate it.
     if "ProgramData" in str(data):
         findings.append(
             f"the data root {data} is machine-scoped. docs/adr/0005 keeps it "
@@ -116,6 +167,8 @@ def collect(expect_frozen: bool) -> dict:
         "frozen": frozen,
         "executable": sys.executable,
         "resource_root": str(resource),
+        "launch_target": str(launcher),
+        "sys_executable": sys.executable,
         "rules_dir": str(rules),
         "rule_files": rule_files,
         "data_root": str(data),
@@ -123,6 +176,7 @@ def collect(expect_frozen: bool) -> dict:
         "ledger_path": str(paths.ledger_path()),
         "config_dir": str(paths.config_dir()),
         "findings": findings,
+        "notes": notes,
         "ok": not findings,
     }
 
@@ -137,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
 
     report = collect(expect_frozen="--expect-frozen" in args)
     print(json.dumps(report, indent=2))
+    for note in report.get("notes", []):
+        print(f"note: {note}", file=sys.stderr)
     for finding in report["findings"]:
         print(f"FAIL: {finding}", file=sys.stderr)
     return 0 if report["ok"] else 1
