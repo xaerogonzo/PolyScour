@@ -496,9 +496,11 @@ different things depending on which privilege level happened to reach the file.
 
 ## The Game Mode supervisor
 
-*Written before the supervisor exists, the same way the elevated helper's
-section was. What follows is a specification the implementation has to satisfy,
-not a description of something already built.*
+*Written before the supervisor existed, the same way the elevated helper's
+section was: a specification the implementation had to satisfy rather than a
+description of something already built. It now exists and satisfies it. The
+order is kept deliberately — the day this section starts being edited to match
+code that already shipped is the day it stops being a threat model.*
 
 Game Mode freezes background programs and resumes them afterwards. T12 records
 the residual it ships with:

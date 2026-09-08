@@ -133,7 +133,21 @@ class _Recorder:
         return [r for r in self.rows.values() if r["resumed_at"] is None]
 
 
-def test_the_ledger_row_is_written_before_the_process_is_frozen(monkeypatch):
+@pytest.fixture
+def unsupervised(monkeypatch):
+    """A session with no recovery supervisor behind it.
+
+    tests/conftest.py already makes a real spawn fail loudly. This is what a
+    test that legitimately calls suspend() installs instead: the supervisor is
+    an improvement on the failure path, and every assertion in this file is
+    about the ledger rather than about it.
+    """
+    from polyscour.gamemode import supervisor
+    monkeypatch.setattr(supervisor, "ensure_running", lambda: False)
+
+
+def test_the_ledger_row_is_written_before_the_process_is_frozen(
+        monkeypatch, unsupervised):
     """The property the whole recovery model rests on."""
     rec = _Recorder()
     monkeypatch.setattr(gm, "suspend_pid",
@@ -187,7 +201,8 @@ def test_the_veto_runs_again_at_suspend_time(monkeypatch):
     assert rec.events == []
 
 
-def test_resume_all_closes_every_row_and_reports_the_stubborn(monkeypatch):
+def test_resume_all_closes_every_row_and_reports_the_stubborn(
+        monkeypatch, unsupervised):
     rec = _Recorder()
     monkeypatch.setattr(gm, "suspend_pid", lambda pid: True)
     sess = gm.GameSession(rec)

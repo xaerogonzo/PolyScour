@@ -177,13 +177,17 @@ class GameModeView(ctk.CTkFrame):
         frozen = [r for r in results if r.suspended]
         refused = [r for r in results if not r.suspended]
         self.refresh()
+
+        parts = [f"{len(frozen)} suspended."]
         if refused:
             # Named, not counted. "3 were refused" is not something a user can
             # act on or check.
-            self.status.configure(
-                text=f"{len(frozen)} suspended. Refused: "
-                     + ", ".join(f"{r.candidate.display_name} ({r.reason})"
-                                 for r in refused[:3]))
+            parts.append("Refused: " + ", ".join(
+                f"{r.candidate.display_name} ({r.reason})"
+                for r in refused[:3]))
+        if frozen:
+            parts.append(_recovery_note(self._session.supervised))
+        self.status.configure(text=" ".join(parts))
 
     def _resume(self) -> None:
         stubborn = self._session.resume_all()
@@ -193,6 +197,21 @@ class GameModeView(ctk.CTkFrame):
             self.status.configure(
                 text="Could not resume: " + ", ".join(stubborn)
                      + ". They are still frozen.")
+
+
+def _recovery_note(supervised: bool) -> str:
+    """What happens to these processes if PolyScour dies, in one sentence.
+
+    Two sentences rather than one, because the two states are genuinely
+    different and the difference is what a user would want to know. Neither
+    promises restoration: a supervisor narrows the window and does not close
+    it (THREAT_MODEL.md T20), and a maintenance tool that overstates its own
+    recovery is doing the thing this product exists not to do.
+    """
+    if supervised:
+        return ("If PolyScour stops, a recovery helper resumes them; if both "
+                "stop, the next launch does.")
+    return "If PolyScour stops, the next launch resumes them."
 
 
 def _has(theme_mod, name: str) -> bool:

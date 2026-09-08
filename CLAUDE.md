@@ -69,7 +69,9 @@ src/polyscour/
 ├── gamemode/
 │   ├── policy.py     NEVER_SUSPEND + structural veto — THE AUTHORITY for
 │   │                 processes, as safety/policy.py is for paths
-│   └── session.py    Record-then-freeze, resume, and startup recovery
+│   ├── session.py    Record-then-freeze, resume, and startup recovery
+│   └── supervisor.py The second process. Unelevated, waits on a HANDLE to
+│                     its parent, then calls session.recover(). Never a copy
 ├── ledger.py         SQLite history + reversals + the cross-process mutation lock
 ├── vault.py          Staged deletion: content-addressed objects + manifests
 ├── cleaning/
@@ -95,7 +97,8 @@ rules/cleaners/*.json  Data only. Never executable, never authority.
 tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.
 tests/golden/ui/      Recorded expected look. Tracked; artifacts/ is not.
-tests/conftest.py     Makes a REAL UAC prompt from the suite fail loudly.
+tests/conftest.py     Makes a REAL UAC prompt, or a REAL supervisor spawn,
+                      from the suite fail loudly.
 build.ps1             Nuitka onefile -> probe -> installer. Entry is
                       entry.py, NOT app.py.
 tools/build_probe.py  How a REAL build resolves its paths. The suite cannot
@@ -189,6 +192,13 @@ Skip doc updates for pure internal refactors with no behaviour change.
   `app_root()` must survive a restart. Never resolve anything durable from the
   first. A build has no `src/` level, so `resource_root()` adjusts — and only
   `tools/build_probe.py`, run from a real build, can check that.
+- **A second process gets its threat model before its code.** The elevated
+  helper did (PR #6 before #7), the supervisor did (PR #13 before #14). That
+  order is what stops "unelevated and temporary" becoming "a small service".
+- **Recovery has exactly one implementation.** `session.recover()`. The
+  supervisor calls it; it does not reimplement it. A second copy is a second
+  place to forget the PID-reuse guard, which is the only thing between
+  "resume what we froze" and "resume a stranger".
 - **Nothing that runs elevated may import the GUI.** `entry.py` dispatches on
   argv before importing either branch, and a subprocess test asserts
   `customtkinter` is absent from `sys.modules` in a real elevated run. Loading

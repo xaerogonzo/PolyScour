@@ -119,20 +119,39 @@ Nothing resumes anything until PolyScour runs again. A hard kill with no
 subsequent launch leaves processes frozen until reboot — `docs/THREAT_MODEL.md`
 T12.
 
-The supervisor specified in "The Game Mode supervisor" narrows that and does
-not remove it. It is an unelevated child, started with a session, that opens a
-**handle** to its parent — not a pid, which recycles — verifies the parent's
-creation time, waits on the handle, and then calls the same
-`gamemode.recover(ledger)` the next launch would have called. Not a copy of it:
-a second implementation of "resume what we froze" is a second place to forget
-the PID-reuse guard.
+`gamemode/supervisor.py` narrows that and does not remove it.
 
-If the parent exited cleanly there are no open rows and recovery does nothing,
-which is why the same code path serves both endings.
+```
+  GUI  --(first successful suspension)--> supervisor (unelevated, detached)
+                                              |
+                                     OpenProcess(SYNCHRONIZE | ...)
+                                     GetProcessTimes(handle) == expected?
+                                              |  no --> exit, do nothing
+                                              |  yes
+                                     WaitForSingleObject(handle, INFINITE)
+                                              |
+                                     session.recover(ledger) --> exit
+```
+
+A **handle**, not a pid. A pid recycles; a handle names a process object, so
+once opened it cannot be redirected. The creation time is read through
+`GetProcessTimes` **on that handle** rather than looked up by pid again —
+a second pid lookup would be answerable by whatever owns the number now, which
+is the confusion the check exists to detect.
+
+It calls `session.recover(ledger)`, not a copy. If the parent exited cleanly
+there are no open rows and recovery does nothing, which is why one code path
+serves both endings.
+
+`ensure_running()` is idempotent and never raises: Game Mode can be entered and
+left repeatedly in one run, and a supervisor is an improvement on the failure
+path rather than a precondition. If it cannot start, recovery still happens at
+the next launch — where it happened before this existed.
 
 What it buys is a smaller window — "until PolyScour's process ends" rather than
 "until the user next opens it, which may be never" — and T20 says plainly that
-a kill taking both processes leaves the original gap untouched.
+a kill taking both processes leaves the original gap untouched. The Game Mode
+screen says so too, in one sentence, whenever anything is frozen.
 
 ## The Startup Manager
 
