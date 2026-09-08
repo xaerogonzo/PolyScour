@@ -82,11 +82,18 @@ run continues. PolyScour never escalates to win a race.
 mismatch, so corrupt data is never handed back as if it were fine. Restore never
 overwrites an existing path.
 
-**Accepted for 0.1:** the vault lives under `%LOCALAPPDATA%\PolyScour`, which is
-writable by the user and therefore by anything running as them. A process
-running as the user could delete vaulted objects. It could also delete the
-originals directly, so this does not expand what an attacker can do — but it
-does mean the vault is not a security boundary, only a convenience.
+**Accepted, and no longer described as temporary.** The vault lives under
+`%LOCALAPPDATA%\PolyScour`, which is writable by the user and therefore by
+anything running as them. A process running as the user could delete vaulted
+objects. It could also delete the originals directly, so this does not expand
+what an attacker can do — but it does mean the vault is not a security boundary,
+only a convenience.
+
+This was originally recorded as a 0.1 concession pending a move to
+`%ProgramData%`. `docs/adr/0005` retires that plan: PolyScour has no privileged
+writer, so a machine-wide tree cannot wall the vault off from the one
+unelevated process that writes it on every clean. The residual is permanent
+until something exists that writes where the user must not.
 
 **Known gap, documented rather than hidden:** an *unreadable* manifest currently
 causes its objects to be treated as unreferenced and collected. The conservative

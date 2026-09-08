@@ -1,6 +1,10 @@
 # 0001 — The vault lives in %LOCALAPPDATA% for 0.1, not %ProgramData%
 
 **Status:** Accepted · **Date:** 2026-09-05
+**Migration superseded by** [0005](0005-the-vault-stays-user-scoped.md) — the vault stays in
+`%LOCALAPPDATA%`. The reasoning below stands; only the *Migration*
+section's conclusion changed, and it is left here rather than edited
+because being wrong about something is part of the record.
 
 ## Context
 
@@ -53,6 +57,11 @@ from. That is precisely the exposure the review was worried about, and adopting
 - Vault contents are per-user. A second user account gets its own.
 
 ## Migration
+
+> **This did not happen, and will not.** See
+> [0005](0005-the-vault-stays-user-scoped.md): PolyScour has no privileged
+> writer, so `%ProgramData%` cannot make the vault a boundary the way it does
+> for PolyShield's service. The paragraph below is the plan as it stood.
 
 Move to `%ProgramData%\PolyScour` in 0.2, **alongside the installer and the
 elevated helper** — at the point where per-subtree ACLs can be set *before* the
