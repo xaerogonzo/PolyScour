@@ -250,9 +250,23 @@ Closing it needs a supervising process. The elevated helper is *not* that
 process and did not close this gap — it is launched per operation and exits,
 which is the opposite of what supervising requires. What the helper established
 is the precedent: a second process gets a threat-model section written before
-its code. The supervisor gets the same treatment, and it will be neither
-elevated nor persistent, because resuming the user's own processes needs no
-administrator rights at all.
+its code.
+
+That section is now written — `THREAT_MODEL.md`, "The Game Mode supervisor",
+plus T20–T22 — and it commits to three things before any code exists:
+
+- **Unelevated.** Resuming the user's own processes needs no administrator
+  rights, so asking for them would buy a standing target to pay for a
+  convenience.
+- **Not persistent.** Started with a session, gone when the GUI's process is.
+- **Its authority is the ledger and nothing else.** It replays what the session
+  recorded; it never enumerates the system looking for suspended processes.
+  That would touch things PolyScour never froze — someone's debugger, an
+  installer mid-operation — with no record that anything had been suspended.
+
+And it is honest about what it buys: the window narrows from "until the user
+next opens PolyScour, which may be never" to "until PolyScour's process ends".
+A kill that takes both leaves the gap exactly as T12 describes it.
 
 ## 10. Startup entries: a third policy, and the first registry write
 

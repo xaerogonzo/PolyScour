@@ -113,12 +113,26 @@ serialises changes to the vault and ledger, and a session lasts as long as
 someone is playing — holding it across that would block every other PolyScour
 operation for hours. Each ledger write takes it briefly instead.
 
-### The gap that is not closed
+### The gap, and how far a supervisor closes it
 
 Nothing resumes anything until PolyScour runs again. A hard kill with no
-subsequent launch leaves processes frozen until reboot. A supervising process
-would fix it and is deferred to 0.2's elevated helper, where a second process
-gets a threat model written before its code — see `docs/THREAT_MODEL.md` T12.
+subsequent launch leaves processes frozen until reboot — `docs/THREAT_MODEL.md`
+T12.
+
+The supervisor specified in "The Game Mode supervisor" narrows that and does
+not remove it. It is an unelevated child, started with a session, that opens a
+**handle** to its parent — not a pid, which recycles — verifies the parent's
+creation time, waits on the handle, and then calls the same
+`gamemode.recover(ledger)` the next launch would have called. Not a copy of it:
+a second implementation of "resume what we froze" is a second place to forget
+the PID-reuse guard.
+
+If the parent exited cleanly there are no open rows and recovery does nothing,
+which is why the same code path serves both endings.
+
+What it buys is a smaller window — "until PolyScour's process ends" rather than
+"until the user next opens it, which may be never" — and T20 says plainly that
+a kill taking both processes leaves the original gap untouched.
 
 ## The Startup Manager
 
