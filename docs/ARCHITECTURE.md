@@ -153,6 +153,97 @@ What it buys is a smaller window — "until PolyScour's process ends" rather tha
 a kill taking both processes leaves the original gap untouched. The Game Mode
 screen says so too, in one sentence, whenever anything is frozen.
 
+## The Storage Analyser
+
+The only subsystem with no executor, and the only one that calls no guard.
+
+```
+storage/volumes.py    which fixed volumes exist, and how full Windows says they are
+storage/analyser.py   a budgeted, read-only, depth-first walk of exactly one of them
+views/storage_view.py three sorted lists and a residual panel; zero action controls
+```
+
+`cleaning/` is DISCOVER -> ANALYZE -> PLAN -> EXECUTE. This stops after ANALYZE
+and imports neither a planner nor an executor, which is why it lives outside
+that package rather than inside it: a read-only walker filed next to the only
+module that deletes things is a walker somebody eventually wires to it.
+
+### Why the guard is not in this chain
+
+`safety/guard.py` authorises an *operation against a path*. There is no
+operation here, and `Guard.authorize()` takes one. Calling it anyway would not
+be harmless belt-and-braces — the guard refuses everything outside the eight
+root families, and everything outside those families is what this subsystem
+exists to describe. `docs/adr/0007` records the decision so a reviewer does not
+read the absence as an oversight.
+
+`safety/reparse.is_reparse_point()` *is* reused, as a measurement rather than a
+safety check: a junction is skipped because descending it double-counts and can
+loop, not because it is dangerous.
+
+### The residual, and what may not go into it
+
+The walk's total never equals used space. That gap is reported with the same
+prominence as the total, because an unexplained 120 GB is the
+"63 devices not reporting OK" failure in a new costume.
+
+Three categories, and keeping them apart is the whole design:
+
+| | Carries | Why |
+|---|---|---|
+| `ResidualReason.*` | **bytes** | Space we could not see *and can quantify* — the size and time budgets, system-managed regions |
+| `permission_denied_directories` | **a count** | We could not open it, so its size is precisely what we do not know. A byte figure would be invented |
+| `reparse_points_skipped`, `hardlinks_deduplicated` | **counts** | Those bytes are counted elsewhere in the tree. Putting them in the residual would invent missing space out of correct deduplication |
+
+`residual_breakdown()` derives its unexplained remainder rather than
+accumulating one, so the parts cannot disagree with the whole.
+
+### Sizes, and one measurement that overturned the design
+
+`st_size` is logical. `scandir` supplies `st_file_attributes` free, and
+`FILE_ATTRIBUTE_COMPRESSED` / `FILE_ATTRIBUTE_SPARSE_FILE` mark exactly the
+files whose on-disk size differs — so `GetCompressedFileSizeW` is called only
+for those. Both sizes are carried on every node.
+
+Hardlinks cost more. `scandir` reports `st_ino = 0` and `st_nlink = 0` on
+Windows — the attributes exist and the values are zero, because directory
+enumeration does not carry them — so deduplication needs a full `os.stat()`.
+
+A shortcut was tried and abandoned, and the reason is recorded in the source
+because reasoning would not have reached it. "Stat under `%SystemRoot%` only"
+was supported by measurement (86.7% of `System32` files hardlinked, 0% across
+120,000 files of user data) and failed twice: an audit that stat'd one skipped
+file in 500 anyway found **27% violations** on a full C: walk, and timing showed
+the shortcut was *slower than not having it* — `Path.is_relative_to()` per file
+costs more than the `os.stat()` it avoided.
+
+```
+no stat at all           16,819 entries/s   double-counts
+stat everything          13,514 entries/s   correct
+stat under %SystemRoot%  12,193 entries/s   wrong AND slowest
+```
+
+Correctness costs 1.24x. CLAUDE.md's rule — performance work needs a
+measurement, not a guess — held in both directions here.
+
+### Budgets, and stopping honestly
+
+`cleaning/scanner.py` aborts a rule that exceeds its ceiling, because a partial
+cache figure presented as complete is a lie. The analyser cannot do that:
+exceeding the budget on a large disk is the *normal* case. So it takes a
+wall-clock and an entry budget, and reports `StopReason` — `COMPLETED`,
+`BUDGET_EXHAUSTED`, `TIME_EXHAUSTED`, `CANCELLED`, `ERROR` — rather than a
+`complete: bool`. A scan that ran out of time says something about the disk; one
+the user cancelled says nothing at all.
+
+Volume usage is snapshotted at **both ends**, so a machine that wrote 1.8 GB
+during the walk reads as a machine doing its job rather than an analyser that
+cannot add up.
+
+One volume per call. A single sweep over every disk gives worse progress, worse
+cancellation, and a residual that means nothing because it mixes several
+volumes' unreadable directories together.
+
 ## The Startup Manager
 
 The second feature outside the cleaning pipeline, and the first that writes to

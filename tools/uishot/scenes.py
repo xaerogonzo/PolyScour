@@ -324,3 +324,89 @@ def startup(session):
         session.shot("startup_entries")
     finally:
         startup_view.list_items = real
+
+
+@scene("storage")
+def storage(session):
+    """The measured tree, the residual, and the three read-only lists.
+
+    Constructed, and it has to be: a real scan of C: takes minutes, returns
+    different numbers every run, and its largest folders are whatever this
+    machine happens to have installed. The golden would be a photograph of one
+    developer's disk.
+
+    The fixed report covers what the screen exists to show -- a scan that
+    stopped at its time budget, a residual larger than a rounding error, every
+    kind of diagnostic note, and enough folders and files to fill the lists.
+    """
+    from pathlib import Path
+
+    from polyscour.storage.analyser import (DirectoryNode, FileEntry,
+                                            ResidualReason, StopReason,
+                                            VolumeReport)
+    from polyscour.storage.volumes import Volume
+    from polyscour.views import storage_view
+
+    GB = 1024 ** 3
+    volume = Volume(root=Path("C:\\"), fstype="NTFS",
+                    total_bytes=953 * GB, used_bytes=807 * GB,
+                    free_bytes=146 * GB)
+
+    root = DirectoryNode(path=Path("C:\\"))
+    for name, size in (("Games", 214 * GB), ("Windows", 71 * GB),
+                       ("Users", 58 * GB), ("Program Files", 17 * GB),
+                       ("ProgramData", 9 * GB), ("Program Files (x86)", 6 * GB)):
+        child = DirectoryNode(path=Path("C:\\") / name)
+        child.logical_bytes = child.allocated_bytes = size
+        child.file_count = 1
+        root.children.append(child)
+    root.allocated_bytes = root.logical_bytes = sum(
+        c.allocated_bytes for c in root.children)
+    root.file_count = len(root.children)
+
+    report = VolumeReport(
+        volume=volume, root=root,
+        stop_reason=StopReason.TIME_EXHAUSTED,
+        elapsed_seconds=120.0, entries_examined=846_301,
+        directories_examined=94_722, max_entries=2_000_000, max_seconds=120.0,
+        used_at_start=807 * GB, used_at_end=807 * GB,
+    )
+    report.residual[ResidualReason.TIME_EXHAUSTED] = 340 * GB
+    report.residual[ResidualReason.SYSTEM_MANAGED] = 51 * GB
+    report.permission_denied_directories = 412
+    report.reparse_points_skipped = 96
+    report.hardlinks_deduplicated = 41_207
+    report.hardlink_bytes_saved = 19 * GB
+    report.largest_files = [
+        FileEntry(Path(r"C:\Games\Mercs\Content.pak"), 75 * GB, 75 * GB),
+        FileEntry(Path(r"C:\pagefile.sys"), 38 * GB, 38 * GB),
+        FileEntry(Path(r"C:\Models\weights.safetensors"), 22 * GB, 22 * GB),
+        FileEntry(Path(r"C:\hiberfil.sys"), 13 * GB, 13 * GB),
+        FileEntry(Path(r"C:\Games\Mercs\textures.pak"), 9 * GB, 9 * GB),
+    ]
+    report.by_extension = {
+        ".pak": 84 * GB, ".sys": 51 * GB, ".safetensors": 22 * GB,
+        ".dll": 11 * GB, ".exe": 6 * GB, "(no extension)": 3 * GB,
+    }
+
+    # The idle screen lists real volumes, and this machine's used-bytes move
+    # between runs -- the first attempt at this golden drifted by 77 px on the
+    # capacity line alone. Patched the same way the startup scene patches
+    # `list_items`, so the shot is comparable rather than a photograph of
+    # whatever the disk happened to hold that minute.
+    others = [
+        Volume(root=Path("D:\\"), fstype="NTFS", total_bytes=1863 * GB,
+               used_bytes=1484 * GB, free_bytes=379 * GB),
+        Volume(root=Path("F:\\"), fstype="NTFS", total_bytes=931 * GB,
+               used_bytes=631 * GB, free_bytes=300 * GB),
+    ]
+    real = storage_view.volumes.fixed_volumes
+    storage_view.volumes.fixed_volumes = lambda: [volume, *others]
+    try:
+        view = session.mount(storage_view.StorageView, app=_app())
+        session.shot("storage_before_scan")
+
+        view._render(report)
+        session.shot("storage_measured")
+    finally:
+        storage_view.volumes.fixed_volumes = real

@@ -61,12 +61,54 @@ The ordinary run is **entirely unelevated**. Anything needing administrator
 rights is skipped and said so plainly — and then offered as a retry you can
 decline, with the count and the rule named before the prompt appears.
 
+## Storage
+
+Where the disk actually went — and, with equal prominence, where PolyScour
+could not look.
+
+A cleaner's honest figure is small. Clearing every cache on a full 500 GB drive
+frees a few hundred megabytes, and "we freed 900 MB" tells you nothing about the
+other 499 GB. This screen is what makes the real answer sayable: your disk is
+full of things a cleaner must never touch.
+
+**It changes nothing, and there is nothing on it to click that would.** No
+Delete, no Clean, no "optimise". Folders are sorted by size because size is a
+fact; a button beside that fact would turn it into a recommendation, and this
+program does not make those.
+
+The number it is most careful about is the one it *cannot* account for. A walk
+never adds up to what Windows reports as used — the page file, the file table,
+restore points, the component store, and every folder an ordinary program is not
+allowed to open. So the unaccounted figure is shown next to the total rather
+than quietly absorbed into it, broken down by reason where that is knowable and
+labelled plainly where it is not:
+
+- Directories it could not open are counted, **never estimated**. It could not
+  read them, so their size is exactly what it does not know, and inventing a
+  number there would defeat the purpose of the panel.
+- Junctions are not followed and their contents are *not* reported as missing —
+  they are counted where the files really live.
+- Files sharing storage under two names are counted once. On this machine 86.7%
+  of the files in `C:\Windows\System32` are shared that way; counting each name
+  separately would roughly double the reported size of Windows.
+- Compressed and sparse files report what they take on disk, not what they
+  claim, because the question is where the space went.
+
+It never asks for administrator rights to make the number look better. An
+unreadable folder stays unreadable and stays counted.
+
 ## What it deliberately does not do yet
 
-Driver management, registry cleaning, secure wipe, duplicate finder, storage
-analyser, uninstaller, WinGet updater, browser extension manager, cloud-drive
-cleaner, process explorer, service manager, scheduled cleaning, CLI,
-portable mode, Recycle Bin.
+Driver management, registry cleaning, secure wipe, duplicate finder,
+uninstaller, WinGet updater, browser extension manager, cloud-drive cleaner,
+process explorer, service manager, scheduled cleaning, CLI, portable mode,
+Recycle Bin.
+
+A duplicate finder is the nearest of these and is still declined: it needs you
+to hand it a folder to search, and every path PolyScour accepts today can only
+ever *narrow* what it may touch. It also has to decide which copy is the real
+one, which is a recommendation it cannot honestly make. `docs/adr/0007` records
+that rather than leaving it as an omission.
 
 The strongest part of this project is what it refuses to build. The shared
 substrate and one trustworthy cleaner come first.
