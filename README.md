@@ -139,9 +139,14 @@ service hosts, security software, itself, or anything not running as you — and
 that last rule is what covers the processes nobody thought to name.
 
 If PolyScour is closed without resuming them, the next launch resumes them and
-says so. If it is hard killed and never launched again, they stay frozen until
-you reboot; that gap is real and is why a supervising process is on the list for
-0.2 rather than improvised here.
+says so.
+
+A recovery supervisor — an ordinary, unprivileged helper that lives only as long
+as a session — shortens the window in which a hard termination can leave
+programs suspended. **It is not a guarantee.** If something takes PolyScour and
+the supervisor together, the programs stay frozen until PolyScour runs again, or
+until you reboot. Resume-at-next-launch remains the fallback, and that gap is
+described in `docs/THREAT_MODEL.md` T20 rather than papered over here.
 
 ## Installing it
 

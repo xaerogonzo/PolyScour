@@ -29,9 +29,11 @@ written down, with each item marked honestly.
   user (trusted)
     │
     ▼
-  PolyScour GUI ── unelevated in 0.1, no service, no helper
-    │              (0.2 adds an elevated helper — see its section below;
-    │               it treats THIS process as untrusted)
+  PolyScour GUI ── unelevated. No service, ever.
+    │              ├─ elevated helper: launched per operation, exits.
+    │              │  Treats THIS process as untrusted. See its section below.
+    │              └─ Game Mode supervisor: unelevated, same user, lives only
+    │                 as long as a session. Holds no privilege to lend.
     │
     ├── rules/*.json ......... DATA. Untrusted. Cannot grant authority.
     ├── safety/policy.py ..... CODE. Trusted. Ships in the build, reviewed.
@@ -178,10 +180,18 @@ next launch, guarding against PID reuse by comparing the recorded process
 creation time.
 
 **Residual:** if PolyScour is hard killed and never launched again, the
-processes stay frozen until reboot. A supervising process would close that gap
-and is deliberately not built in 0.1 — it would be PolyScour's first second
-process, and 0.2's elevated helper is where that gets a threat model written
-before the code.
+processes stay frozen until reboot.
+
+A supervising process **narrows** that residual and does not remove it — see
+"The Game Mode supervisor" below, and T20. The window becomes "until
+PolyScour's process ends" rather than "until the user next opens PolyScour,
+which may be never". A kill that takes both processes leaves things exactly
+where this paragraph found them.
+
+The elevated helper is not that supervisor and was never going to be: it is
+launched per operation and exits, which is the opposite shape. It did establish
+the precedent this follows — a second process gets a threat-model section
+written before its code.
 
 ### T13 — A startup entry is changed to something the user did not intend
 
@@ -483,6 +493,159 @@ untrusted caller; nothing that could add to it ever is.
 Without this, a path the user explicitly protected would be honoured on the
 unelevated path and deleted on the elevated one — the setting would mean two
 different things depending on which privilege level happened to reach the file.
+
+## The Game Mode supervisor
+
+*Written before the supervisor exists, the same way the elevated helper's
+section was. What follows is a specification the implementation has to satisfy,
+not a description of something already built.*
+
+Game Mode freezes background programs and resumes them afterwards. T12 records
+the residual it ships with:
+
+> if PolyScour is hard killed and never launched again, the processes stay
+> frozen until reboot
+
+A frozen process does not exit, keeps its memory, and presents to the user as
+an application that has hung for no reason. Nothing else on the machine knows
+how to release it. `Services.__init__` calls `gamemode.recover()` on every
+launch, so the gap closes the next time PolyScour runs — and stays open
+indefinitely if it never does.
+
+Closing it needs a second process that outlives the GUI's death by exactly long
+enough to clean up after it.
+
+### What it is not
+
+**Not elevated.** Suspending and resuming the user's own processes needs no
+administrator rights at all; `gamemode/session.py` already does both
+unelevated. A supervisor that asked for privilege would be buying a standing
+elevated target to pay for a convenience — the trade the helper's
+"per-operation and not retained" section exists to refuse.
+
+**Not a service, and not persistent.** It is started with a Game Mode session
+and exits when that session's process is gone. It does not install, does not
+survive a reboot, and there is nothing to uninstall. A resident process that
+watches for PolyScour is a different product with a different threat model.
+
+**Not the elevated helper.** The helper is launched per operation and exits;
+that is the opposite shape from supervising, and `docs/adr/0005` already
+records that it is therefore not the privileged component this product lacks.
+The supervisor does not change that: it holds no privilege to lend.
+
+### The shape
+
+```
+  PolyScour GUI (unelevated)
+        │  starts a Game Mode session, freezes N processes
+        │  spawns, passing its own pid and process start time
+        ▼
+  supervisor (unelevated, same user)
+        │  opens a HANDLE to the parent, verifies the start time
+        │  waits on that handle — no polling, no PID comparisons
+        │
+        ├── parent exits cleanly  → the ledger has no open rows → nothing to do
+        └── parent is hard killed → gamemode.recover(ledger) → resume, record
+```
+
+Then it exits. In both cases it runs exactly the same code the next launch
+would have run, just sooner.
+
+### Its authority is the ledger, and nothing else
+
+The supervisor replays the recovery set the session recorded. It **never**
+enumerates the system looking for suspended processes.
+
+That distinction is the whole of its safety. "Find everything that is suspended
+and resume it" would touch processes PolyScour never froze — something else's
+debugger, an installer mid-operation, a program a user deliberately paused —
+and would do it with no record that anything was ever suspended in the first
+place. `gamemode/policy.py` remains the authority over what may be touched, and
+the ledger remains the record of what actually was.
+
+Concretely: it calls `gamemode.recover(ledger)`, which is the function the GUI
+already calls at startup. Not a copy of it. A second implementation of "resume
+what we froze" is a second place for the PID-reuse guard to be forgotten.
+
+### PID reuse, on both sides
+
+PIDs are recycled freely, so "resume 1234" can mean an unrelated process by the
+time anyone acts on it. This is already handled for the *suspended* processes:
+each ledger row records the process creation time, and `_identify()` compares
+it before resuming, reporting `recycled` rather than touching a stranger.
+
+The supervisor introduces the same problem pointed at the *parent*. Waiting on
+"the process with pid N" would, after a recycle, mean waiting on something
+else — and then either never cleaning up, or cleaning up while PolyScour is
+still running and resuming processes the user is still playing over.
+
+So the supervisor is given the parent's pid **and its creation time**, opens a
+handle immediately, and verifies the creation time before it waits. A handle
+refers to a specific process object rather than to a number, so once opened it
+cannot be redirected by a recycle. If the verification fails, the supervisor
+exits without doing anything: it was aimed at the wrong process, and doing
+nothing is the correct response to that.
+
+### T20 — The supervisor is killed too
+
+**Not mitigated, and this is a shorter window rather than a guarantee.**
+
+A hard kill that takes both processes — a power loss, `taskkill /T` on the
+tree, a bugcheck — leaves the suspended processes exactly where T12 left them:
+frozen until PolyScour runs again, or until reboot.
+
+The supervisor narrows the window from "until the user next opens PolyScour",
+which may be never, to "until the moment PolyScour's process ends". It does not
+close it. `README.md` must say so in those words, and must not say *processes
+will always be restored*: resume-at-next-launch remains the fallback, and a
+maintenance tool that overstates its own recovery is doing the thing this
+product exists not to do.
+
+### T21 — The supervisor resumes something it should not
+
+**Mitigated by construction, twice over.**
+
+It acts only on rows the session wrote, and every row carries the creation time
+of the process it describes. A recycled PID is identified and skipped rather
+than resumed blindly — the same check the startup path already makes, because
+it is literally the same function.
+
+Resuming is also the *safe* direction. The dangerous operation in this feature
+is suspending, and the supervisor has no path to it: there is no code in it
+that can freeze anything, only code that unfreezes what the ledger says was
+frozen. A supervisor that behaves completely wrongly resumes a process that was
+already running, which is a no-op.
+
+### T22 — The supervisor is launched by something else
+
+**Not a privilege boundary, and does not need to be.**
+
+Anyone who can run the supervisor can already run PolyScour, as themselves,
+with the same rights. Doing so gains them nothing they did not have: the worst
+available outcome is resuming processes that the *same user* previously
+suspended through PolyScour, which that user could do from Task Manager.
+
+It takes a pid and a creation time, and both only narrow what it will do — an
+argument that fails to match a running process means it exits without acting.
+That is the same test every parameter crossing into the elevated helper has to
+pass, applied here even though nothing here is privileged, because a parameter
+that can only cause less action is one nobody has to reason about again.
+
+The supervisor holds no elevated rights to lend, opens no port, and listens for
+nothing.
+
+### The ledger is now written by two processes
+
+It already can be — the cross-process mutation lock in `ledger.py` exists
+because a second PolyScour may be running — and the supervisor is one more
+writer of the same kind, taking the same lock for the same brief writes.
+
+The ordering that makes this safe is the one Game Mode already has: the
+suspension is recorded **before** the process is frozen. A supervisor that
+wakes to find a row for a process that was never actually suspended performs a
+harmless resume on something already running. The reverse ordering would leave
+a frozen process with no row, which nothing — supervisor or startup — would
+ever find.
 
 ## Non-goals
 
