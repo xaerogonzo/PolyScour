@@ -44,7 +44,10 @@ symbol, `tokensave_callers`/`tokensave_callees` for call graphs. Fall back to
 
 **Name:** PolyScour — a transparent, evidence-based Windows maintenance suite
 **Stack:** Python 3.11+, CustomTkinter, Windows-only
-**Entry point:** `python -m polyscour.app` → `App.mainloop()`
+**Entry point:** `python -m polyscour.entry` → GUI, or `--elevated-helper
+<request>` → the helper. `app.py` still runs directly for development; the
+compiled build enters through `entry.py` so the elevated branch never
+imports a GUI toolkit. See `docs/adr/0006`.
 **Venv:** `venv/`
 **Shared substrate:** [PolyBedrock](../PolyBedrock) — `polybedrock-core` (platform) and
 `polybedrock-ui` (theming), installed editable. See `../PolyBedrock/docs/adr/`.
@@ -53,6 +56,8 @@ symbol, `tokensave_callers`/`tokensave_callees` for call graphs. Fall back to
 
 ```
 src/polyscour/
+├── entry.py          Which of the two programs runs. Imports neither at
+│                     module scope. THE COMPILED ENTRY POINT
 ├── app.py            CTk shell — sidebar nav, lazy view factories, Services
 ├── paths.py          polybedrock.paths shim; app_name="PolyScour", scope="user"
 ├── settings.py       polybedrock.settings shim + PolyScour DEFAULTS
@@ -91,6 +96,7 @@ tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.
 tests/golden/ui/      Recorded expected look. Tracked; artifacts/ is not.
 tests/conftest.py     Makes a REAL UAC prompt from the suite fail loudly.
+build.ps1             Nuitka onefile. Entry is entry.py, NOT app.py.
 ```
 
 ## Testing the GUI without it being on screen
@@ -173,6 +179,14 @@ Skip doc updates for pure internal refactors with no behaviour change.
   parameter has to pass. `exclusions` and `expected_raw_value` pass it because
   each can only cause a refusal; anything that could add to the permitted set
   never does, whatever it is called.
+- **Nothing that runs elevated may import the GUI.** `entry.py` dispatches on
+  argv before importing either branch, and a subprocess test asserts
+  `customtkinter` is absent from `sys.modules` in a real elevated run. Loading
+  Tk as administrator is not a named vulnerability; it is an enormous increase
+  in what runs at privilege, for nothing.
+- **"Am I frozen" is answered once, by `polybedrock.paths.is_frozen()`.** Never
+  by `sys.frozen` — Nuitka does not set it, and a second copy of that predicate
+  is how a build breaks only after it is installed.
 - **The helper reads no rule files.** It resolves roots and ceilings from
   `safety/policy.py`, which is why `min_age_days` is a floor there rather than
   only in the JSON — an edited rule file must not be able to widen an elevated

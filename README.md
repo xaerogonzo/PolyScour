@@ -148,8 +148,13 @@ you reboot; that gap is real and is why a supervising process is on the list for
 ```powershell
 python -m venv venv
 .\venv\Scripts\pip install -e "..\PolyBedrock\core" -e "..\PolyBedrock\ui" -e .
-.\venv\Scripts\python -m polyscour.app
+.\venv\Scripts\python -m polyscour.entry
 ```
+
+`polyscour.entry` is the entry point an installed build uses; `polyscour.app`
+still runs the GUI directly if you prefer. The difference matters only for the
+elevated helper, which is the *same* program under a different argument — see
+[docs/adr/0006](docs/adr/0006-one-executable-two-programs.md).
 
 ```powershell
 .\venv\Scripts\python -m pytest

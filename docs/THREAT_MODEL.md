@@ -308,6 +308,26 @@ is permitted to touch. A request naming a rule that does not exist is refused;
 a path outside that rule's permitted roots is refused; a reparse point
 encountered anywhere in the walk is refused.
 
+### What runs at privilege is kept small on purpose
+
+The helper and the GUI are one executable, dispatched on one argument before
+anything is imported. That argument is checked in `entry.py`, which imports
+neither branch at module scope.
+
+This matters because `app.py` imports CustomTkinter, and importing that imports
+Tk and Tcl. Entering the helper through it would put a GUI toolkit inside an
+elevated process. No named vulnerability follows from that — it is simply tens
+of thousands of lines running as administrator to delete one file, in a design
+whose stated property is that the elevated part is small enough to read.
+
+Asserted rather than intended: a subprocess test runs a real elevated operation
+and checks that `customtkinter`, `tkinter`, `PIL` and `pystray` are all absent
+from `sys.modules` afterwards.
+
+Unknown arguments are refused, not ignored — the same reason
+`Request.from_json` refuses an unexpected parameter rather than proceeding on
+the overlap. See `docs/adr/0006`.
+
 ### Elevation is per-operation and not retained
 
 The helper is launched for a unit of work and exits when it is done. It does

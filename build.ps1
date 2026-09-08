@@ -5,12 +5,22 @@
 #
 # Produces standalone .exe files in dist\ with no Python install required.
 #
-# STATUS: NOT VERIFIED. Packaging is explicitly out of scope for 0.1 (see
-# README, "What it deliberately does not do yet"). The entry point and output
-# name are filled in below so this script is coherent rather than half
-# templated -- but no build has been run, and polybedrock-core / polybedrock-ui are
-# NOT staged into the payload, so a compiled build would fail to import them.
-# Packaging, and that staging question, land in 0.9.
+# STATUS: NOT YET RUN on this machine (Nuitka is not installed in venv/), but
+# no longer knowingly wrong. This note used to say packaging lands in 0.9,
+# which stopped being true the moment the elevated helper shipped: T15 requires
+# an installed location only administrators can write, and the helper's frozen
+# launch path cannot be honest without a frozen build to launch. Packaging is
+# 0.2. See docs/adr/0006.
+#
+# Fixed here since that note was written:
+#   - the entry point is entry.py, not app.py. app.py imports CustomTkinter at
+#     module scope, and this same executable also runs the ELEVATED helper --
+#     so entering through app.py would load a GUI toolkit as administrator.
+#   - polybedrock is staged into the payload. It is installed editable from a
+#     sibling checkout, which Nuitka does not follow on its own.
+#   - PIL and pystray are gone. Nothing in PolyScour imports either; pillow
+#     arrives only through polybedrock-ui's uishot, which is a development
+#     tool with no business in a shipped build.
 #
 # Prerequisites (run once):
 #   pip install nuitka ordered-set zstandard
@@ -135,8 +145,14 @@ $guiArgs = @(
     "--onefile",
     "--windows-console-mode=disable",
     "--enable-plugin=tk-inter",
-    "--include-package=PIL",
-    "--include-package=pystray",
+    # Installed editable from ..\PolyBedrock, so it is not an ordinary package
+    # in site-packages and Nuitka will not find it by tracing imports alone.
+    # Without this the build succeeds and the exe dies on its first import.
+    "--include-package=polybedrock",
+    # Both halves matter: the GUI needs polybedrock.ui, and the ELEVATED helper
+    # needs polybedrock.paths. A build missing either is one whose helper
+    # cannot run -- and that failure would only appear at a UAC prompt.
+    "--include-package=polyscour",
     # ---- Anaconda bloat exclusions (safe to remove if not using Anaconda) ----
     # If building from an Anaconda or conda env, Nuitka traces into numpy,
     # scipy, pandas etc. even if your app never imports them, bundling ~450 MB
@@ -175,11 +191,15 @@ $guiArgs = @(
 #     "--output-filename=PolyScour.exe"
 # )
 
-Build-Exe "$ROOT\src\polyscour\app.py" "PolyScour.exe" $guiArgs
+# entry.py, NOT app.py. One executable is two programs -- the GUI and the
+# elevated helper -- and which one runs is decided by an argument before
+# anything is imported. Entering through app.py would pull CustomTkinter, Tk
+# and Tcl into the elevated process. See src/polyscour/entry.py.
+Build-Exe "$ROOT\src\polyscour\entry.py" "PolyScour.exe" $guiArgs
 
-# Add more Build-Exe calls here if the project ships multiple binaries.
-# Example:
-# Build-Exe "$ROOT\src\my-helper.py" "my-helper.exe" $cliArgs
+# There is deliberately no second binary. A separate helper.exe would be a
+# second file to protect with ACLs and a second to verify, for no gain: the
+# helper has to be the same trusted binary in the same protected directory.
 
 # ---------- Stage data files (edit per project) ------------------------------
 # If your app ships with config files, templates, docs, etc., copy them
