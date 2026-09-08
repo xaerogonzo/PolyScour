@@ -150,11 +150,11 @@ described in `docs/THREAT_MODEL.md` T20 rather than papered over here.
 
 ## Installing it
 
-> **No release is published yet.** The application builds and runs — a real
-> `PolyScour.exe` exists and works — but the setup program has not been
-> compiled, so there is nothing to download today. What follows describes what
-> the installer does; `docs/adr/0006` records what the first build measured,
-> including the privilege-escalation bug it found.
+> **No release is published yet.** Both the application and the setup program
+> build — `PolyScour-Setup-0.2.0.exe` exists — but nothing has been published,
+> and nobody has yet installed it and checked that the program directory really
+> does end up administrator-only. `docs/adr/0006` records what the first build
+> measured, including the privilege-escalation bug it found.
 
 `PolyScour-Setup-<version>.exe` needs administrator rights, and asks for them
 for exactly one reason: to make `C:\Program Files\PolyScour` a directory an

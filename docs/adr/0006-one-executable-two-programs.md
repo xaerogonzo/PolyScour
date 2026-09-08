@@ -185,9 +185,36 @@ recorded here so nobody assumes the usage message is doing work it cannot do.
 The elevated helper is unaffected — it answers in a *file*, precisely because
 a process launched by `ShellExecute("runas")` has no inherited pipes.
 
-## Still not done
+## The installer compiles too
 
-The installer is not compiled: Inno Setup is not installed on this machine, and
-`build.ps1` says so and continues rather than failing. `installer/polyscour.iss`
-and the ACL script are reviewed and the verifier has been exercised against real
-directories, but no `PolyScour-Setup-*.exe` exists yet.
+`PolyScour-Setup-0.2.0.exe`, 17.5 MB, from Inno Setup 6.7.3.
+
+It took two fixes, and both are the same shape as everything else in this file
+— an assumption that was never tested against the thing it described:
+
+- **The ISCC search list assumed Program Files.** Inno Setup 6 offers a
+  per-user install under `%LOCALAPPDATA%\Programs`, which is where this machine
+  had it, so `build.ps1` reported "not found" on a machine that had it. Cheap,
+  because the script warned and continued rather than acting on the wrong
+  answer — the same mistake as `sys.executable`, without the blast radius.
+- **There was no `LICENSE` file.** `README.md` said "MIT" and `pyproject.toml`
+  declared `license = { text = "MIT" }`, and neither is a licence. Nothing in
+  the test suite could notice, because nothing imports a licence. It took a
+  build step that has to *open the file* to turn the claim into a check.
+
+## What remains unverified
+
+**Nobody has installed it.** The setup program exists and compiles; whether a
+real installation ends up with an administrator-only program directory has not
+been observed. That is T15 — the claim every other guarantee in the threat
+model rests on — and it is currently supported by:
+
+- `set_program_acls.ps1` exercised, unelevated, against a user-writable
+  directory (correctly fails) and against `C:\Program Files\Windows Defender`
+  (correctly passes, DACL and write probe)
+- an installer that runs the script and then re-runs it with `-Verify`
+
+That is a good argument and it is not a measurement. The remaining step is to
+install the product and run `set_program_acls.ps1 -Verify` **as an ordinary
+user** against the real installation directory — the only run that proves
+rather than describes.

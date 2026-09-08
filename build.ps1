@@ -282,10 +282,16 @@ if ($LASTEXITCODE -ne 0) {
 # as the answer to "who can rewrite this file?" (THREAT_MODEL.md T15).
 
 $iscc = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+if ($iscc) { $iscc = $iscc.Source }
 if (-not $iscc) {
+    # Inno Setup 6 offers a per-user install, and it does not go under
+    # Program Files. The first version of this list assumed it did and
+    # reported "not found" on a machine that had it -- the same shape of
+    # mistake as every other path assumption in this project, just cheaper.
     foreach ($candidate in @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-        "$env:ProgramFiles\Inno Setup 6\ISCC.exe")) {
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")) {
         if (Test-Path $candidate) { $iscc = $candidate; break }
     }
 }
