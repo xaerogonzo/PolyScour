@@ -3,7 +3,9 @@
 # Generated from nuitka-build.ps1.template
 # =============================================================================
 #
-# Produces standalone .exe files in dist\ with no Python install required.
+# Produces dist\PolyScour\ -- a standalone directory holding PolyScour.exe
+# and every DLL it loads, with no Python install required. NOT a single
+# file: see THREAT_MODEL.md T24.
 #
 # STATUS: RUN, on 2026-09-08, with Nuitka 4.2.1 / zig 0.16.0 on Python 3.13.
 # Produces PolyScour.exe at ~15.5 MB (58.9 MB uncompressed payload). The GUI
@@ -87,7 +89,11 @@ if ($LASTEXITCODE -ne 0) {
 
 function Clear-NuitkaOrphans($dir) {
     if (-not (Test-Path $dir)) { return }
-    $patterns = @("*.onefile-build", "*.build", "*.dist")
+    # NOT "*.dist". Under --standalone that directory IS the build output --
+    # the executable plus every DLL and .pyd it loads. This list removes
+    # Nuitka's scratch directories, and deleting the product along with
+    # them would be a build that reports success and ships nothing.
+    $patterns = @("*.onefile-build", "*.build")
     foreach ($pat in $patterns) {
         Get-ChildItem -Path $dir -Directory -Filter $pat -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "  [clean] removing $($_.Name)" -ForegroundColor DarkGray
@@ -102,7 +108,15 @@ function Clear-NuitkaOrphans($dir) {
 
 # ---------- Build helper -----------------------------------------------------
 
-function Build-Exe($script, $outName, $nuArgs) {
+function Build-Exe($script, $outName, $nuArgs, $distName) {
+    # Checked rather than defaulted. A missing $distName used to surface four
+    # minutes into a compile as "Cannot bind argument to parameter 'NewName'",
+    # after the expensive part had already succeeded.
+    if ([string]::IsNullOrWhiteSpace($distName)) {
+        throw "Build-Exe requires a `$distName (the directory to rename " +
+              "<script>.dist to). Building $outName without one."
+    }
+
     $isGuiBuild = $nuArgs -contains "--enable-plugin=tk-inter"
 
     if ((Test-Path $ICON) -and ($isGuiBuild)) {
@@ -113,10 +127,10 @@ function Build-Exe($script, $outName, $nuArgs) {
 
     Write-Host "  Building $outName ..." -ForegroundColor Cyan
 
-    # Capture output so we can parse the uncompressed payload size for the sanity check.
-    # Temporarily suspend Stop mode: with $ErrorActionPreference = "Stop", PowerShell
-    # treats each native command stderr line as a NativeCommandError and aborts.
-    # Nuitka writes progress to stderr, so we must use Continue while capturing.
+    # Capture output so the size sanity check below can read it. Temporarily
+    # suspend Stop mode: with $ErrorActionPreference = "Stop", PowerShell treats
+    # each native command stderr line as a NativeCommandError and aborts, and
+    # Nuitka writes its progress to stderr.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $buildOutput = & $PYTHON @nuArgs $script 2>&1
@@ -127,33 +141,52 @@ function Build-Exe($script, $outName, $nuArgs) {
     if ($nuitkaExit -ne 0) {
         throw "Nuitka failed (exit $nuitkaExit) building $outName"
     }
-    Write-Host "  OK: $DIST\$outName" -ForegroundColor Green
+
+    # ---- Name the output directory -----------------------------------------
+    # --standalone emits "<script basename>.dist", so entry.py would install as
+    # "entry.dist" -- a directory name that says nothing about what is in it,
+    # in C:\Program Files. Renamed here so the installer, the ACL script and
+    # verify_install.ps1 all name the same thing.
+    $stem     = [System.IO.Path]::GetFileNameWithoutExtension($script)
+    $produced = Join-Path $DIST "$stem.dist"
+    $target   = Join-Path $DIST $distName
+
+    if (-not (Test-Path $produced)) {
+        throw "Nuitka reported success but $produced does not exist. " +
+              "Did --standalone get dropped from the argument list?"
+    }
+    if (Test-Path $target) { Remove-Item $target -Recurse -Force }
+    Rename-Item -LiteralPath $produced -NewName $distName
+
+    $exe = Join-Path $target $outName
+    if (-not (Test-Path $exe)) {
+        throw "$exe is missing from the standalone output. " +
+              "Check --output-filename=$outName."
+    }
+    Write-Host "  OK: $exe" -ForegroundColor Green
 
     Clear-NuitkaOrphans $DIST
 
-    # ---- Sanity check: uncompressed payload size ---------------------------
-    # Nuitka compresses onefile payloads ~27%, so a healthy tkinter+PIL+pystray
-    # app lands at ~14 MB on disk even though the uncompressed payload is ~55 MB.
-    # Checking the compressed exe size would always fire a false WARN, so we
-    # parse the uncompressed size from Nuitka's own "Onefile payload..." log line.
-    # Only enforce for GUI builds (--enable-plugin=tk-inter present).
-    # CLI tools can legitimately be a few MB uncompressed - skip the check.
+    # ---- Sanity check: payload size ----------------------------------------
+    # A GUI build that lost --enable-plugin or an --include-package still
+    # compiles; it dies on its first import instead, at a user's machine. The
+    # cheap tell is that it is far too small.
+    #
+    # Measured over the DIRECTORY now. The old check parsed Nuitka's "Onefile
+    # payload compression ratio" line, which --standalone never prints -- so
+    # left alone it would have silently stopped checking anything. A check that
+    # quietly matches nothing is worse than no check, because it still reports.
     if ($isGuiBuild) {
-        $payloadLine = ($buildOutput | Select-String "Onefile payload compression ratio") | Select-Object -Last 1
-        if ($payloadLine -match "size (\d+) to") {
-            $uncompressedMB = [math]::Round([long]$Matches[1] / 1MB, 1)
-            if ($uncompressedMB -lt 30) {
-                Write-Host ""
-                Write-Host "  [WARN] $outName uncompressed payload is only $uncompressedMB MB - suspicious for a GUI build." -ForegroundColor Yellow
-                Write-Host "         Likely a missing --enable-plugin or --include-package flag." -ForegroundColor Yellow
-                Write-Host "         Run the exe from cmd with --windows-console-mode=attach to debug." -ForegroundColor Yellow
-                Write-Host ""
-            } else {
-                Write-Host "  Payload OK: $uncompressedMB MB uncompressed" -ForegroundColor DarkGray
-            }
+        $bytes = (Get-ChildItem $target -Recurse -File |
+                  Measure-Object -Property Length -Sum).Sum
+        $sizeMB = [math]::Round($bytes / 1MB, 1)
+        if ($sizeMB -lt 30) {
+            Write-Host ""
+            Write-Host "  [WARN] $distName is only $sizeMB MB - suspicious for a GUI build." -ForegroundColor Yellow
+            Write-Host "         Likely a missing --enable-plugin or --include-package flag." -ForegroundColor Yellow
+            Write-Host ""
         } else {
-            $sizeMB = [math]::Round((Get-Item "$DIST\$outName").Length / 1MB, 1)
-            Write-Host "  Compressed size: $sizeMB MB (could not parse uncompressed payload)" -ForegroundColor DarkGray
+            Write-Host "  Payload OK: $sizeMB MB across $((Get-ChildItem $target -Recurse -File).Count) files" -ForegroundColor DarkGray
         }
     }
 }
@@ -170,7 +203,13 @@ New-Item -ItemType Directory -Force -Path $DIST | Out-Null
 # Remove PIL/pystray below if this app does not use them.
 $guiArgs = @(
     "-m", "nuitka",
-    "--onefile",
+    # --standalone, NOT --onefile. Onefile unpacks the runtime and every
+    # .pyd into %TEMP%\onefile_* and executes from there -- a directory the
+    # user holds Full Control over, inherited from %LOCALAPPDATA%\Temp.
+    # This same binary runs as the ELEVATED helper, so that put the code
+    # executing at privilege OUTSIDE the directory T15's ACLs protect.
+    # Measured, then fixed: THREAT_MODEL.md T24.
+    "--standalone",
     "--windows-console-mode=disable",
     "--enable-plugin=tk-inter",
     # Installed editable from ..\PolyBedrock, so it is not an ordinary package
@@ -230,7 +269,7 @@ $guiArgs = @(
 # elevated helper -- and which one runs is decided by an argument before
 # anything is imported. Entering through app.py would pull CustomTkinter, Tk
 # and Tcl into the elevated process. See src/polyscour/entry.py.
-Build-Exe "$ROOT\src\polyscour\entry.py" "PolyScour.exe" $guiArgs
+Build-Exe "$ROOT\src\polyscour\entry.py" "PolyScour.exe" $guiArgs "PolyScour"
 
 # There is deliberately no second binary. A separate helper.exe would be a
 # second file to protect with ACLs and a second to verify, for no gain: the
@@ -251,7 +290,10 @@ Build-Exe "$ROOT\src\polyscour\entry.py" "PolyScour.exe" $guiArgs
 
 $probeArgs = @(
     "-m", "nuitka",
-    "--onefile",
+    # --standalone for the same reason the GUI is (T24). The probe must be
+    # built with the same packaging as the thing it probes, or it reports
+    # on a build nobody ships.
+    "--standalone",
     "--windows-console-mode=force",
     "--include-package=polyscour",
     "--include-package=polybedrock",
@@ -264,11 +306,11 @@ $probeArgs = @(
     "--output-filename=build_probe.exe"
 )
 
-Build-Exe "$ROOT\tools\build_probe.py" "build_probe.exe" $probeArgs
+Build-Exe "$ROOT\tools\build_probe.py" "build_probe.exe" $probeArgs "probe"
 
 Write-Host ""
 Write-Host "--- how the build resolves its paths ---" -ForegroundColor Cyan
-& "$DIST\build_probe.exe" --expect-frozen
+& "$DIST\probe\build_probe.exe" --expect-frozen
 if ($LASTEXITCODE -ne 0) {
     throw "build_probe reported a path the build resolves wrongly (above). " +
           "Shipping this would produce an application that either cannot find " +

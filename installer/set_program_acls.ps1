@@ -79,7 +79,17 @@ $WRITE_MASK = [System.Security.AccessControl.FileSystemRights]::WriteData -bor
               [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
               [System.Security.AccessControl.FileSystemRights]::Delete -bor
               [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-              [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+              [System.Security.AccessControl.FileSystemRights]::TakeOwnership -bor
+              # FILE_DELETE_CHILD, and it is not implied by Delete above.
+              #
+              # Delete is a right on the FILE. DeleteSubdirectoriesAndFiles is
+              # a right on the DIRECTORY, and it permits removing a child
+              # WITHOUT holding Delete on that child. So an ACE granting Users
+              # only this one would leave every check above satisfied while an
+              # ordinary user could still remove PolyScour.exe and put their
+              # own there -- which is precisely T15, reached by the one door
+              # the mask did not cover.
+              [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
 
 function Test-IsElevated {
     $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -153,6 +163,53 @@ function Invoke-Verify {
     }
     if (-not $adminFull) {
         $problems.Add("Administrators do not have full control")
+    }
+
+    # 3b. THE PAYLOAD, not just the directory.
+    #
+    #     A --standalone build installs 978 files: PolyScour.exe, the Python
+    #     runtime, and every .pyd it loads. The same binary runs as the elevated
+    #     helper, so an ordinary user who can replace ANY of them has replaced
+    #     code that executes as administrator. "The ACLs on PolyScour.exe are
+    #     right" was never the claim worth making, and with a directory build
+    #     it is visibly not. THREAT_MODEL T15, T24.
+    #
+    #     Only non-inheriting children are examined. A child that inherits is
+    #     covered by the checks above on the parent, by definition -- and
+    #     re-deriving that for a thousand files would turn a verification step
+    #     into something slow enough that people stop running it. What a
+    #     protected child ACL means is that somebody set permissions on that
+    #     file specifically, which is exactly the case the parent cannot speak
+    #     for.
+    $childProblems = 0
+    $childExamined = 0
+    foreach ($item in (Get-ChildItem -LiteralPath $Path -Recurse -Force `
+                       -ErrorAction SilentlyContinue)) {
+        $childAcl = $null
+        try { $childAcl = Get-Acl -LiteralPath $item.FullName -ErrorAction Stop }
+        catch { continue }
+        if (-not $childAcl.AreAccessRulesProtected) { continue }
+
+        $childExamined++
+        foreach ($rule in $childAcl.Access) {
+            if ($rule.AccessControlType -ne
+                [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+            $sid = Get-SidString $rule.IdentityReference
+            if ($null -eq $sid) { continue }
+            if ($UNPRIVILEGED -notcontains $sid) { continue }
+            if (($rule.FileSystemRights -band $WRITE_MASK) -ne 0) {
+                $childProblems++
+                # Capped. A thousand identical lines is not a report.
+                if ($childProblems -le 10) {
+                    $problems.Add(
+                        "$($item.FullName): $($rule.IdentityReference) may write " +
+                        "($($rule.FileSystemRights)) via an ACL of its own")
+                }
+            }
+        }
+    }
+    if ($childProblems -gt 10) {
+        $problems.Add("...and $($childProblems - 10) more files with their own writable ACLs")
     }
 
     # 4. The half that only an UNELEVATED run can answer. An administrator can

@@ -3,7 +3,7 @@
 > A transparent, evidence-based Windows maintenance suite. Free, local, and
 > willing to tell you what it does not know.
 
-![Status](https://img.shields.io/badge/status-0.1%20development-orange)
+![Status](https://img.shields.io/badge/status-0.2%20development-orange)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11%2B-green)
 ![Licence](https://img.shields.io/badge/licence-MIT-blue)
@@ -150,11 +150,13 @@ described in `docs/THREAT_MODEL.md` T20 rather than papered over here.
 
 ## Installing it
 
-> **No release is published yet.** Both the application and the setup program
-> build — `PolyScour-Setup-0.2.0.exe` exists — but nothing has been published,
-> and nobody has yet installed it and checked that the program directory really
-> does end up administrator-only. `docs/adr/0006` records what the first build
-> measured, including the privilege-escalation bug it found.
+> **No release is published yet**, but it has now been installed and measured.
+> `C:\Program Files\PolyScour` came out administrator-only — checked as an
+> ordinary user, by permissions *and* by trying to write into it, across all
+> 981 installed files rather than only the one with PolyScour's name on it. The
+> installer added no data directory, no autorun, no service and no scheduled
+> task, and the installed version matches the source. `docs/adr/0006` records
+> the numbers, and the two privilege problems the builds found on the way.
 
 `PolyScour-Setup-<version>.exe` needs administrator rights, and asks for them
 for exactly one reason: to make `C:\Program Files\PolyScour` a directory an
@@ -164,6 +166,14 @@ That is not paperwork. `PolyScour.exe` is also the elevated helper, so every
 rule inside it — the closed operation set, the safety checks re-run at
 privilege — is worth exactly as much as the answer to *who can rewrite this
 file?* Installing is what settles that; unzipping does not.
+
+**And it is the whole directory that has to be protected, not one file.**
+PolyScour ships as an executable plus the runtime it loads — around a thousand
+files — because the alternative packs them into a single `.exe` that unpacks
+itself into your temporary folder and runs from there. That folder is one you
+can write, so it would have put the code running as administrator outside the
+very boundary this installer exists to create. That was measured rather than
+guessed, and `docs/THREAT_MODEL.md` T24 records it.
 
 It installs the program and nothing else:
 
@@ -185,8 +195,21 @@ anywhere and would see a boundary that is not there:
 powershell -ExecutionPolicy Bypass -File "C:\Program Files\PolyScour\set_program_acls.ps1" -Root "C:\Program Files\PolyScour" -Verify
 ```
 
-It tries to write into the directory and expects to fail, and tries to read the
-executable and expects to succeed.
+It tries to write into the directory and expects to fail, tries to read the
+executable and expects to succeed, and checks every shipped file rather than
+only the one with PolyScour's name on it — any of them is loaded by the process
+that runs as administrator.
+
+From a source checkout there is a fuller version, which also checks that the
+installer registered where it says it did, created no data directory, added no
+autorun, and installed the version the source claims:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\verify_install.ps1 -Stage Installed
+```
+
+It refuses to run elevated rather than warning about it, because an
+administrator can write anywhere and would get a pass that measured nothing.
 
 ## Running it from source
 

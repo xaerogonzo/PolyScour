@@ -174,16 +174,35 @@ a reader.
 
 ## A consequence worth knowing: the build has no console
 
-`--windows-console-mode=disable` makes this a Windows-subsystem binary, so
-`print(..., file=sys.stderr)` reaches nobody. The usage text in `entry.py` is
-therefore invisible in a real build — someone who types a wrong argument gets
-exit code 2 and silence.
+`--windows-console-mode=disable` makes this a Windows-subsystem binary, so it
+allocates no console of its own.
 
-That is acceptable rather than good: the command line is not a supported
-interface, and the two flags on it are launched by PolyScour itself. It is
-recorded here so nobody assumes the usage message is doing work it cannot do.
-The elevated helper is unaffected — it answers in a *file*, precisely because
-a process launched by `ShellExecute("runas")` has no inherited pipes.
+**Corrected 2026-09-08, by running the installed build.** This section
+previously said the usage text was "invisible in a real build — someone who
+types a wrong argument gets exit code 2 and silence". That is too strong, and
+it was itself a claim about a packaged build that had never been tested against
+one. Measured:
+
+```
+Start-Process "C:\Program Files\PolyScour\PolyScour.exe" `
+    -ArgumentList "--not-a-real-flag" -Wait -PassThru -NoNewWindow
+```
+
+prints `unknown argument: '--not-a-real-flag'` and the full usage text, then
+exits 2. A Windows-subsystem process does not *create* a console, but it
+inherits the standard handles of one that launched it — so the message reaches
+a terminal and is lost only on a double-click or a launch with no inherited
+handles.
+
+The conclusion is unchanged and the reasoning is now right: the command line is
+not a supported interface, the flags on it are launched by PolyScour itself,
+and nobody should assume the usage message is doing work it cannot do. The
+elevated helper is unaffected either way — it answers in a *file*, precisely
+because a process launched by `ShellExecute("runas")` has no inherited pipes.
+
+That correction is the fifth of the family this file catalogues, and the
+cheapest: nothing depended on it. It is recorded because the pattern is what
+matters, not the blast radius.
 
 ## The installer compiles too
 
@@ -202,19 +221,215 @@ It took two fixes, and both are the same shape as everything else in this file
   the test suite could notice, because nothing imports a licence. It took a
   build step that has to *open the file* to turn the claim into a check.
 
-## What remains unverified
+## The packaging changed again, and this time for a security reason
 
-**Nobody has installed it.** The setup program exists and compiles; whether a
-real installation ends up with an administrator-only program directory has not
-been observed. That is T15 — the claim every other guarantee in the threat
-model rests on — and it is currently supported by:
+*Added 2026-09-08. `--onefile` is gone; the build is `--standalone`.*
 
-- `set_program_acls.ps1` exercised, unelevated, against a user-writable
-  directory (correctly fails) and against `C:\Program Files\Windows Defender`
-  (correctly passes, DACL and write probe)
-- an installer that runs the script and then re-runs it with `-Verify`
+Generalising T15 from "an attacker who can rewrite `PolyScour.exe`" to "an
+attacker who can rewrite **anything the trusted process loads**" produced a
+question this ADR had not asked, and `tools/build_probe.py` was extended to
+answer it rather than reason about it.
 
-That is a good argument and it is not a measurement. The remaining step is to
-install the product and run `set_program_acls.ps1 -Verify` **as an ordinary
-user** against the real installation directory — the only run that proves
-rather than describes.
+Under `--onefile`, `PolyScour.exe` unpacked its Python runtime and every native
+extension module into `%TEMP%\onefile_{PID}_{TIME_US}_{RANDOM}` and executed
+from there. Measured:
+
+```
+extraction_dir             %LOCALAPPDATA%\Temp\onefile_7592_116693_qJKINLtzAbM
+extraction_dir_writable    true
+extraction_dir_dacl        NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+                           BUILTIN\Administrators:(I)(OI)(CI)(F)
+                           XAERO\pmpd:(I)(OI)(CI)(F)
+```
+
+Every ACE inherited, and the user holds Full Control. So the code executing as
+administrator lived **outside** the directory T15's ACLs protect — the same
+shape as T23, one step further along the same path. `THREAT_MODEL.md` **T24**
+records it in full, including that the obvious fix (a static
+`--onefile-tempdir-spec`) makes it strictly worse by trading an unpredictable
+per-run directory for a predictable, persistent one.
+
+**`--standalone` is the fix**, and it is the only one that closes rather than
+narrows: the DLLs ship beside the executable, so what runs at privilege is
+inside the boundary the installer establishes.
+
+**This ADR's decision is untouched.** "One executable, two programs" is about
+`entry.py` dispatching on an argument before importing either branch. It was
+never about onefile. There is still exactly one `PolyScour.exe`, it is still
+both programs, and `--standalone` changes only what sits next to it.
+
+### What the standalone build measured
+
+| Claim | Result |
+|---|---|
+| the runtime no longer resolves into `%TEMP%` | `runtime_dir_in_temp: false` |
+| `sys.executable` | `<install>\python.exe`, inside the program directory |
+| `resource_root()` under a directory build | correct — all eight rules resolve |
+| the data root stays in `%LOCALAPPDATA%` | yes, and not under the program directory |
+| the GUI payload | 56.6 MB across **978 files** |
+| the installer still compiles | yes — `PolyScour-Setup-0.2.0.exe`, 15.9 MB |
+| the probe gate can still fail | yes — exit 1, confirmed by running it against the wrong expectation |
+
+### Three things it broke, all in `build.ps1`
+
+Worth listing because each was silent in a different way:
+
+- **`Clear-NuitkaOrphans` deleted `*.dist`.** Under onefile that was scratch;
+  under `--standalone` it is the *product*. Left alone, the build would have
+  reported success and shipped nothing.
+- **The payload sanity check parsed `"Onefile payload compression ratio"`**, a
+  line `--standalone` never prints. It would not have errored — it would have
+  quietly stopped checking anything while still printing reassuringly. It now
+  measures the output directory. A check that silently matches nothing is worse
+  than no check, because it still reports.
+- **`build_probe.py`'s T23 gate asked the wrong question.** It failed a build
+  whose launcher was inside `resource_root()`, which under onefile meant "inside
+  the extraction directory" and was right by accident. Under `--standalone` the
+  resource root *is* the program directory, so that gate would have failed every
+  build. It now enforces the invariant that survives both packagings: **nothing
+  frozen may run out of a temporary directory.**
+
+### And a consequence for verification
+
+The installed payload is 978 files, not one. "Check the ACLs on `PolyScour.exe`"
+was never the right claim, and is now visibly not: `tools/verify_install.ps1`
+checks every file in the program directory, because any one of them is loaded
+by the process that runs as the elevated helper.
+
+## What supports T15 now
+
+*This section used to be titled "What remains unverified" and began "Nobody has
+installed it." Both were true when written and neither is now. It is rewritten
+rather than annotated, because a stale claim left in place is the thing this ADR
+is otherwise a catalogue of.*
+
+T15 — the installed program directory is one an ordinary user cannot write — is
+supported by three things, in ascending order of what they prove:
+
+1. **An argument.** The installer applies `Administrators:F` /
+   `Users:Read-and-Execute` and then re-runs the script with `-Verify`.
+2. **Tests.** `tests/test_program_acls.py` exercises the verifier unelevated
+   against a directory where Users hold `FILE_DELETE_CHILD` (must fail) and
+   against `C:\Program Files\Windows Defender` (must pass). Both controls, and
+   the negative one has been watched failing.
+3. **A measurement.** `tools/verify_install.ps1 -Stage Installed`, run as an
+   ordinary user against the real installation, walking every one of its 981
+   files. See the section above.
+
+Only the third proves rather than describes, and it is the one that did not
+exist when this ADR was first written.
+
+### A gap the tests found in the verifier itself
+
+Writing `tests/test_program_acls.py` turned up a hole in `set_program_acls.ps1`:
+`$WRITE_MASK` omitted `DeleteSubdirectoriesAndFiles` (`FILE_DELETE_CHILD`).
+
+Measured, because the two are easy to assume related and are not:
+
+```
+Delete                        = 65536   (0x10000)  a right on the FILE
+DeleteSubdirectoriesAndFiles  = 64      (0x40)     a right on the DIRECTORY
+Delete implies FILE_DELETE_CHILD?  False
+```
+
+`FILE_DELETE_CHILD` on a directory permits removing a child **without** holding
+`Delete` on that child. So an ACE granting Users only that bit satisfied every
+check the script made, while leaving an ordinary user able to remove
+`PolyScour.exe` and put their own there — T15, reached through the one door the
+mask did not cover.
+
+The negative control was then itself checked by removing the flag again and
+re-running: the test failed, and it failed on the DACL assertion rather than on
+the exit code, which matters. The fixture's own directory is owned by the test
+user, so the write probe fires there whatever the mask says — an exit-code check
+alone would have passed a regressed mask for an unrelated reason. That is
+recorded in the test, because a control nobody has watched fail is not yet a
+control.
+
+## What the first real installation measured
+
+*2026-09-08, unelevated, `tools/verify_install.ps1`, against
+`C:\Program Files\PolyScour`.*
+
+**T15 is measured rather than argued.** That sentence is the point of this
+section, and of the tool that produced it.
+
+### The run that found the stale installation
+
+The first run was against an installation this ADR did not know existed. Its
+own text said "nobody has installed it" — written, true when written, and
+nothing ever opened the registry to notice it had stopped being true. The
+uninstall key was there the whole time.
+
+That installation was the **onefile** build: 4 files, 19.9 MB. The payload check
+flagged it as a live T24 installation, which is the new gate earning its place
+on a real machine rather than a fixture. T15 passed on it too — the ACLs were
+right; it was the *packaging inside them* that was wrong.
+
+### The measurement that counts
+
+Uninstalled, re-snapshotted clean, and reinstalled from the `--standalone`
+build:
+
+| Claim | Result |
+|---|---|
+| the program directory is administrator-only | **yes** — `acl_verify_exit: 0`, DACL *and* write probe, unelevated, across **every one of 981 files** |
+| the payload is a directory build | yes — 981 files, 63,906,155 bytes |
+| the installer registered where it installed | yes — resolved from `InstallLocation`, not assumed from `%ProgramFiles%` |
+| `DisplayVersion` matches `pyproject.toml` | yes — `0.2.0` at both ends, closing the version chain |
+| the installer creates no data directory | **yes, as a delta** — `%LOCALAPPDATA%\PolyScour` absent before *and* after |
+| no autorun, no service, no scheduled task | none |
+| the payload actually loads | yes — both branches run from the installed location: an unknown argument exits **2** with usage, and the helper exits **1** having written `<request>.response` with `refused_by: protocol` |
+
+The last row matters more for a directory build than it did for onefile. 981
+files is 981 chances for one to be missing from the installer's `[Files]`
+section, and the failure mode is an application that installs cleanly and dies
+on launch. Neither the build probe nor the ACL check would notice; only running
+it does.
+
+**981 = 978 + 3.** The build produces 978 files; the installer adds
+`set_program_acls.ps1`, `unins000.exe` and `unins000.dat`. Every file inside the
+trusted boundary is accounted for — nothing arrived that the build did not
+produce or the installer did not declare.
+
+### Why the PreInstall stage exists, demonstrated
+
+"The installer creates no data directory" is a **delta**, and the first attempt
+at this check was an absolute: *`%LOCALAPPDATA%\PolyScour` must be absent*. That
+is false on any machine PolyScour has ever been *run* from, and it was false on
+this one — the first snapshot recorded two files already there, which would have
+made an absolute check report a failure that meant nothing.
+
+Taken against a genuinely clean machine the delta is `exists: false` before and
+`exists: false` after, and now says something. A check that cannot fail for the
+right reason is not made better by also being able to fail for the wrong one.
+
+### Still outstanding
+
+`%LOCALAPPDATA%\PolyScour` had not been created at the time of the measurement,
+because the application had not been launched. Re-running `-Stage Installed`
+after one launch covers the remaining half — that the data root is writable and
+is not under the program directory. `-Stage Uninstalled` has not been run.
+
+## The manual half
+
+Three things `tools/verify_install.ps1` cannot reach, because each needs a real
+UAC prompt and `tests/conftest.py` exists to make a prompt raised from an
+automated context fail loudly. That guard is not going to acquire an exception;
+these are run by hand, once per release.
+
+- [ ] **The elevated Clean retry.** Clean → a rule covering `C:\Windows\Temp` →
+      *Retry as administrator*. Check that the consent dialog names PolyScour
+      **from the install root**, and that the item count appears *before* the
+      prompt rather than after (T18). Then check History records an
+      `ElevationRecord` matching what actually happened.
+- [ ] **A machine-wide startup toggle.** Startup → flip an `HKLM` entry. One
+      prompt, not one per operation; Task Manager agrees afterwards; the row
+      said it would need administrator rights *before* it was touched (T14).
+      Undo it and confirm the undo refuses if the target changed (T13).
+- [ ] **Supervisor recovery.** Game Mode → suspend something → kill PolyScour
+      from Task Manager → confirm the supervisor resumes it without PolyScour
+      being restarted (T20), and that the ledger row is marked resumed.
+
+An unticked box here is not a failing test. It is a statement that this release
+has not been through the three things only a person at the machine can do.
