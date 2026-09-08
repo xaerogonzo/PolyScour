@@ -15,7 +15,6 @@ requests an attacker would.
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 import sys
 
@@ -722,6 +721,34 @@ def test_the_staging_directory_is_removed_on_every_path(staging, monkeypatch,
         f"the {scenario} path left its staging directory behind")
 
 
+class _FakeClock:
+    """A clock the test advances itself, standing in for `client.time`.
+
+    The first version of these two tests used real sleeps in a worker thread
+    against a 0.15 s timeout. They passed here and twice in CI, then failed on
+    a loaded machine — which is the worst kind of test: one that is usually
+    right, so a genuine regression reads as "flaky again, re-run it".
+
+    Nothing about the deadline logic needs real time to exercise. `sleep()`
+    advances the clock and hands control to a callback, so the helper's
+    behaviour is driven by the polling loop rather than racing it.
+    """
+
+    def __init__(self, on_tick=None):
+        self.now = 0.0
+        self.ticks = 0
+        self._on_tick = on_tick
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+        self.ticks += 1
+        if self._on_tick is not None:
+            self._on_tick(self)
+
+
 def test_a_long_batch_does_not_time_out_while_it_reports_progress(staging,
                                                                   monkeypatch):
     """The timeout is a *silence* timeout, and this is why.
@@ -729,28 +756,30 @@ def test_a_long_batch_does_not_time_out_while_it_reports_progress(staging,
     A fixed duration would make the GUI conclude the helper is dead and
     re-scan while an elevated process is still deleting files — which is the
     one genuinely dangerous failure available here.
+
+    The clock is advanced far past `_TIMEOUT_S` in total; what keeps the
+    request alive is that the helper keeps saying so.
     """
-    import threading as _threading
     import polyscour.elevation.client as client
 
+    paths = {}
+
     def launch(request_path):
-        progress = request_path.with_name("progress")
-        response = request_path.with_suffix(".json.response")
-
-        def work():
-            # Longer than the silence timeout, in steps shorter than it.
-            for done in range(6):
-                time.sleep(0.05)
-                progress.write_text(str(done), encoding="utf-8")
-            response.write_text(
-                Response(True, "deleted 6").to_json(), encoding="utf-8")
-
-        _threading.Thread(target=work, daemon=True).start()
+        paths["progress"] = request_path.with_name("progress")
+        paths["response"] = request_path.with_suffix(".json.response")
         return True
 
+    def tick(clock):
+        # A heartbeat every 5 polls — comfortably inside the timeout — and an
+        # answer only after the clock has run well past it.
+        if clock.ticks % 5 == 0:
+            paths["progress"].write_text(str(clock.ticks), encoding="utf-8")
+        if clock.now > client._TIMEOUT_S * 4:
+            paths["response"].write_text(
+                Response(True, "deleted 6").to_json(), encoding="utf-8")
+
     monkeypatch.setattr(client, "_launch", launch)
-    monkeypatch.setattr(client, "_TIMEOUT_S", 0.15)
-    monkeypatch.setattr(client, "_POLL_S", 0.01)
+    monkeypatch.setattr(client, "time", _FakeClock(tick))
 
     response = client.request(Operation.DELETE_APPROVED_PATH,
                               rule_id="user-temp", path=r"C:\Temp\x.tmp")
@@ -760,12 +789,16 @@ def test_a_long_batch_does_not_time_out_while_it_reports_progress(staging,
 
 def test_a_silent_helper_still_times_out(staging, monkeypatch):
     """The control for the test above. A deadline that never expires is not a
-    deadline, and a user who walks away must not leave a thread blocked."""
+    deadline, and a user who walks away must not leave a thread blocked.
+
+    Same fake clock, same total elapsed time, one difference: nothing writes
+    progress. If this passed *and* the test above passed against a client that
+    ignored the heartbeat, one of them would be lying.
+    """
     import polyscour.elevation.client as client
 
     monkeypatch.setattr(client, "_launch", lambda p: True)
-    monkeypatch.setattr(client, "_TIMEOUT_S", 0.2)
-    monkeypatch.setattr(client, "_POLL_S", 0.02)
+    monkeypatch.setattr(client, "time", _FakeClock())
 
     response = client.request(Operation.DELETE_APPROVED_PATH,
                               rule_id="user-temp", path=r"C:\Temp\x.tmp")
