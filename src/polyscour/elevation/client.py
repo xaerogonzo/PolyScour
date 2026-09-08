@@ -43,6 +43,7 @@ import time
 from pathlib import Path
 
 from polyscour.elevation.protocol import Operation, Request, Response
+from polyscour.entry import _HELPER_FLAG as HELPER_FLAG
 
 #: How long to wait for the helper. Generous: the clock starts before the UAC
 #: prompt appears, and a person deciding whether to consent is not a hung
@@ -205,8 +206,25 @@ def _helper_command(request_path: Path) -> tuple[str, str]:
     Frozen and source builds differ, and getting this wrong is the trap
     PolyShield already documented: in a compiled build ``sys.executable`` names
     a python.exe beside the real binary that does not exist.
+
+    Which is exactly what this got wrong. It tested ``sys.frozen`` — the flag
+    **PyInstaller** sets. Nuitka, which is what builds this project, does not
+    set it; it injects ``__compiled__``. So a compiled build would have taken
+    the source branch and run ``PolyScour.exe -m polyscour.entry ...``, which
+    the executable has no idea what to do with. It would have worked in every
+    development run and failed only once installed.
+
+    ``polybedrock.paths.is_frozen()`` already answers this correctly for both
+    packagers, and is overridable for tests. Asking it is the fix; the lesson
+    is that "am I frozen" is not a question worth answering twice.
     """
-    if getattr(sys, "frozen", False):
-        return sys.executable, f'--elevated-helper "{request_path}"'
+    from polyscour import paths
+
+    if paths.is_frozen():
+        return sys.executable, f'{HELPER_FLAG} "{request_path}"'
+
+    # Deliberately the same entry point and the same flag as the frozen case,
+    # rather than `-m polyscour.elevation.helper`. Development then exercises
+    # the dispatch that ships, instead of a shortcut around it.
     return (sys.executable,
-            f'-m polyscour.elevation.helper "{request_path}"')
+            f'-m polyscour.entry {HELPER_FLAG} "{request_path}"')

@@ -157,6 +157,48 @@ Absence of an approval record means **enabled** — that is Windows' default, an
 most entries never get a record. Orphan records (an approval naming a `Run`
 value that no longer exists) are excluded: they are not startup items, and
 listing them would offer a switch that governs nothing.
+## The entry point: one executable, two programs
+
+`PolyScour.exe` with no arguments is the GUI. `PolyScour.exe
+--elevated-helper <request>` is the helper. There is no `helper.exe` — the
+helper has to be the same trusted binary in the same administrator-protected
+directory, or it is a second thing to protect and a second thing to verify.
+
+`entry.py` is the compiled entry point, **not** `app.py`, and imports neither
+branch at module scope:
+
+```
+argv --> entry.main()
+           |
+           +-- "--elevated-helper" --> import helper, run it, exit
+           |                           (no GUI import happens on this path)
+           +-- nothing              --> import app, mainloop()
+           +-- anything else        --> refuse, exit 2
+```
+
+`app.py` imports CustomTkinter at module scope, so entering through it would
+load Tk and Tcl into an elevated process — an enormous increase in what runs at
+privilege, for nothing. A subprocess test asserts `customtkinter` is absent
+from `sys.modules` after a real elevated run; asserting it in-process would
+prove nothing, because pytest has already imported it for the UI tests.
+
+Unknown arguments are refused rather than ignored, and `--elevated-helper` is
+an exact string: `--elevated-helper-x` and `--ELEVATED-HELPER` are unknown
+arguments, with a test each. See `docs/adr/0006`.
+
+### Frozen and source differ, and the difference is asked once
+
+`elevation/client._helper_command()` chose its branch with `sys.frozen` — which
+is **PyInstaller's** flag. Nuitka, which builds this project, injects
+`__compiled__`. A compiled build would have taken the source branch and asked
+the executable to run a module, and only an installed build would ever have
+shown it.
+
+`polybedrock.paths.is_frozen()` already answers correctly for both packagers
+and is overridable for tests. There is now one predicate, and
+`test_the_two_modes_disagree` catches a future one that always answers the same
+way.
+
 ## The elevated helper
 
 Specified in `docs/THREAT_MODEL.md` before it was written. The shape:
