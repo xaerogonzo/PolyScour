@@ -156,6 +156,17 @@ class PolicyEntry:
     max_candidates: int
     max_bytes: int
     max_depth: int
+    #: A floor, not a ceiling: the youngest a file may be and still be a
+    #: candidate. A rule may demand older, never younger.
+    #:
+    #: This lives here rather than only in the rule file because the elevated
+    #: helper needs a number it can trust. The helper enumerates for itself
+    #: (docs/adr/0004) and must not read `rules/cleaners/*.json` to decide how
+    #: much to delete -- that is data, and data is not authority. Without a
+    #: floor in code, an edited rule file would widen an elevated delete from
+    #: "files older than a week" to "everything, including what an installer
+    #: wrote thirty seconds ago".
+    min_age_days: int = 0
 
 
 _C = RootFamily
@@ -173,11 +184,16 @@ POLICY: dict[str, PolicyEntry] = {
         scope=Scope.ONE_DIRECTORY,
         max_candidates=200_000, max_bytes=64 * 1024**3, max_depth=12),
 
+    # The only entry with an age floor today, because it is the only one the
+    # elevated helper acts on. C:\Windows\Temp is a working directory for
+    # installers and servicing: a file written this morning may well be in use
+    # by something that has not finished.
     "windows-temp": PolicyEntry(
         families=frozenset({_C.WINDOWS_TEMP}),
         operations=frozenset({_O.DELETE}),
         scope=Scope.SYSTEM_CACHE,
-        max_candidates=200_000, max_bytes=64 * 1024**3, max_depth=12),
+        max_candidates=200_000, max_bytes=64 * 1024**3, max_depth=12,
+        min_age_days=7),
 
     "thumbnail-cache": PolicyEntry(
         families=frozenset({_C.THUMBNAIL_CACHE}),

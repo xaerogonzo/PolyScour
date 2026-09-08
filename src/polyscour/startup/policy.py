@@ -42,6 +42,17 @@ from polyscour.startup.manager import StartupItem
 _OWN_NAMES = frozenset({"polyscour"})
 
 
+def is_own_entry(value_name: str) -> bool:
+    """Whether this names PolyScour's own autorun.
+
+    Public because the elevated helper re-applies it. The helper assumes the
+    GUI lies, and "PolyScour will not switch itself off" is a rule that should
+    not stop being true merely because the request arrived at administrator
+    privilege. Same reasoning as calling ``authorize()`` twice.
+    """
+    return value_name.strip().lower() in _OWN_NAMES
+
+
 def veto(item: StartupItem) -> str | None:
     """Why this entry may not be changed, or ``None`` if it may.
 
@@ -52,7 +63,7 @@ def veto(item: StartupItem) -> str | None:
         return ("machine-wide entries affect every account and need "
                 "administrator rights, which PolyScour 0.1 does not use")
 
-    if item.entry.value_name.strip().lower() in _OWN_NAMES:
+    if is_own_entry(item.entry.value_name):
         return "PolyScour will not disable its own startup entry"
 
     if not item.entry.value_name:
