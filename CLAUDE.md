@@ -87,12 +87,18 @@ src/polyscour/
 │   │                 Enumerates for itself, so a request names no path
 │   └── client.py     ShellExecute("runas"), one prompt per operation.
 │                     Silence timeout + cancel sentinel, not a fixed deadline
+├── storage/
+│   ├── volumes.py    Fixed volumes + capacity. psutil for what is mounted,
+│   │                 shutil.disk_usage for how full
+│   └── analyser.py   Budgeted read-only walk. Calls NO guard (adr/0007), and
+│                     the residual is a first-class number
 ├── startup/
 │   ├── manager.py    Read Run keys + the StartupApproved byte; TargetState
 │   ├── policy.py     veto() absolute; requires_elevation() a cost, not a
 │   │                 refusal — THE AUTHORITY for autoruns
 │   └── service.py    veto -> ledger -> registry (or helper), and the undo
-└── views/            dashboard, clean, gamemode, startup, history, settings
+└── views/            dashboard, clean, storage, gamemode, startup, history,
+                      settings
 rules/cleaners/*.json  Data only. Never executable, never authority.
 tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.

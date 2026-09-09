@@ -53,7 +53,7 @@ def app(isolated):
 
 def test_the_shell_builds(app):
     assert app.title() == "PolyScour"
-    assert set(app._nav_buttons) == {"dashboard", "clean", "game",
+    assert set(app._nav_buttons) == {"dashboard", "clean", "storage", "game",
                                      "startup", "history", "settings"}
 
 

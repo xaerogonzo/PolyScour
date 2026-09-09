@@ -27,6 +27,9 @@ platforms rather than pretending to pass.
 | System health tile | `powershell.exe` on PATH | Tile reports unavailable, with the reason |
 | Windows temp cleaning | Administrator | Files are skipped and reported, never silently omitted |
 | PolyShield tile | PolyShield installed and running | The tile does not render at all |
+| Storage analyser | `psutil` for volume enumeration | No volumes are listed, and the screen says so rather than showing an empty tree |
+| Storage: on-disk sizes | `kernel32.GetCompressedFileSizeW` | Falls back to logical size, labelled as which — a worse answer, not a wrong one |
+| Storage: complete totals | Administrator | **Not offered.** Unreadable directories are counted and named; the residual grows and says why. Elevation is not requested to shrink a number |
 
 ## Capabilities declared today
 
