@@ -105,6 +105,8 @@ tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
 tests/golden/ui/      Recorded expected look. Tracked; artifacts/ is not.
 tests/conftest.py     Makes a REAL UAC prompt, or a REAL supervisor spawn,
                       from the suite fail loudly.
+run.bat               Launches the source GUI via entry.py, no console
+                      (pythonw); --console keeps one for tracebacks.
 build.ps1             Nuitka onefile -> probe -> installer. Entry is
                       entry.py, NOT app.py.
 tools/verify_install.ps1  What a REAL installation became. Refuses to run
