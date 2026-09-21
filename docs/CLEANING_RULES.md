@@ -73,6 +73,21 @@ presented confidently is worse than an honest failure.
 - [ ] Does the description say what is *not* touched?
 - [ ] Is `risk` honest? `safe` means genuinely regenerable.
 - [ ] Does it need a `condition` — would cleaning it while an app is open hurt?
+      **Find out, don't assume:** read what the tool does when its cache vanishes
+      (pip's `SafeFileCache` tolerates it), and check what Windows does to a file
+      the tool holds open (it refuses the delete). Conditions match process
+      *names*, so never add one you cannot actually satisfy — a check that reads
+      "fine" when the tool is launched a different way is no check
+      (`docs/adr/0009`, decision 2).
+- [ ] Does the tool let a user **move its cache**? Then the family must name the
+      *default* location and read none of the tool's configuration — an
+      environment variable or ini file is data, and following it lets somebody
+      else aim the rule (`docs/adr/0009`, threat T25).
 - [ ] Are the ceilings tight enough that a mistake aborts rather than deletes?
+      Is `max_depth` **measured against the real layout**, and is there a test that
+      builds that layout and requires every file to be found? A ceiling that stops
+      short leaves most of the cache behind, silently.
 - [ ] Is `expected_scope` what a scan actually produces?
+- [ ] Are the bytes really **yours to free**? Hardlinked or shared files free
+      nothing until their last name goes (conda's package cache is 68% shared).
 - [ ] Would you be happy for this to run unattended on your own machine?

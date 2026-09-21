@@ -46,7 +46,16 @@ only `safety/policy.py` knows what a family resolves to:
 ```
 USER_TEMP · WINDOWS_TEMP · THUMBNAIL_CACHE · SHADER_CACHE
 BROWSER_CACHE_CHROME · BROWSER_CACHE_EDGE · BROWSER_CACHE_FIREFOX · CRASH_DUMPS
+PIP_CACHE
 ```
+
+**A family for a tool's cache names the tool's default location, never its
+configured one.** Tools let users move their caches (`PIP_CACHE_DIR`, a `pip.ini`,
+`--cache-dir`), and every one of those is configuration — data somebody else
+controls. A resolver that followed it would turn "delete pip's cache" into "delete
+whatever a setting names". So `PIP_CACHE` is `%LOCALAPPDATA%\pip\Cache` and reads
+no pip configuration at all; a redirected cache is simply not covered. Every
+developer-tool family follows this. See `docs/adr/0009` and threat T25.
 
 `POLICY` maps each rule id to the families it may use, the operations it may
 perform, its expected scope and its ceilings. **A rule id absent from `POLICY`

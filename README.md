@@ -42,7 +42,7 @@ A single vertical slice, end to end and heavily tested:
 Launch → scan → findings → plan → confirm → clean → verify → record → undo
 ```
 
-Eight cleaning rules, grouped so you decide by category rather than by file:
+Nine cleaning rules, grouped so you decide by category rather than by file:
 
 | Rule | Risk | Reversible |
 |---|---|---|
@@ -51,11 +51,22 @@ Eight cleaning rules, grouped so you decide by category rather than by file:
 | Explorer thumbnail cache | Safe | No — Windows rebuilds it |
 | DirectX shader cache | Safe | No — regenerated on demand |
 | Chrome / Edge / Firefox cache | Safe | No — rebuilt as you browse |
+| pip download cache | Safe | No — pip re-downloads or rebuilds it |
 | Application crash dumps | Moderate | **Yes** — moved to the vault |
 
 Browser rules refuse to run while that browser is open, because clearing a cache
 out from under a live profile can corrupt it. If process enumeration fails, the
 rule skips rather than guessing.
+
+**The pip rule covers pip's default cache location and nothing else.** If you have
+moved your cache with `PIP_CACHE_DIR` or a `pip.ini`, PolyScour does not follow
+that — those are settings someone else can change, and a cleaner that obeyed them
+could be pointed at any folder. It has no "pip is not running" check either, and
+that is deliberate rather than an omission: pip copes with its cache disappearing
+mid-run, Windows refuses to delete a file pip has open (so it is skipped and
+reported, like any file in use), and a check by process name cannot see
+`python -m pip` at all. The worst case is one install re-downloading a file.
+`docs/adr/0009` has the evidence.
 
 The ordinary run is **entirely unelevated**. Anything needing administrator
 rights is skipped and said so plainly — and then offered as a retry you can

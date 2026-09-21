@@ -1,0 +1,20 @@
+{
+  "id": "pip-cache",
+  "name": "pip download cache",
+  "category": "Developer",
+  "risk": "safe",
+  "root_families": [
+    "pip_cache"
+  ],
+  "patterns": [
+    "*"
+  ],
+  "conditions": [],
+  "min_age_days": 0,
+  "expected_scope": "one_directory",
+  "description": "The downloads and built wheels pip keeps so it does not fetch them twice. pip fetches or rebuilds what it needs next time, so the cost is bandwidth and build time, and an install with no network will need it back. Installed packages, virtual environments and pip's settings are NOT touched. Only pip's default cache location is covered: a cache moved with PIP_CACHE_DIR or a pip.ini is not followed.",
+  "limits": {
+    "max_candidates": 200000
+  },
+  "requires_elevation": false
+}

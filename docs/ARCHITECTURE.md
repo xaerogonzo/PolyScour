@@ -179,7 +179,7 @@ module that deletes things is a walker somebody eventually wires to it.
 
 `safety/guard.py` authorises an *operation against a path*. There is no
 operation here, and `Guard.authorize()` takes one. Calling it anyway would not
-be harmless belt-and-braces — the guard refuses everything outside the eight
+be harmless belt-and-braces — the guard refuses everything outside the
 root families, and everything outside those families is what this subsystem
 exists to describe. `docs/adr/0007` records the decision so a reviewer does not
 read the absence as an oversight.

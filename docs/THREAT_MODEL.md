@@ -845,6 +845,49 @@ harmless resume on something already running. The reverse ordering would leave
 a frozen process with no row, which nothing — supervisor or startup — would
 ever find.
 
+## Developer-tool caches
+
+Added with the pip cache rule (`docs/adr/0009`). No new process, no new
+privilege — the section exists because these cleaners are the first whose
+*target location is something the target's own configuration can move*, which
+none of the earlier families could be.
+
+### T25 — A tool's own configuration redirects a cleaner at something that matters
+
+**Mitigated, by construction.** pip lets its cache be moved by `PIP_CACHE_DIR`,
+`--cache-dir`, or `cache-dir` in a `pip.ini`. Each is data another program, another
+user of the machine, or a typo controls. If `RootFamily.PIP_CACHE` honoured any of
+them, "delete pip's cache" would become "delete whatever that setting names".
+
+The family therefore resolves pip's **default** location
+(`%LOCALAPPDATA%\pip\Cache`) and reads no pip configuration at all — not the
+environment variable, not any ini, not the output of `pip cache dir`, which would
+mean executing whichever `pip` is first on `PATH`. This is T1's argument applied
+to a place T1 did not have to consider: a rule cannot name a path, and now neither
+can the tool it cleans up after.
+
+Tested with the redirect actually in place — the environment variable, an ini
+named by `PIP_CONFIG_FILE`, and a user `pip.ini` all pointing at a folder that
+matters — and by breaking the resolver three ways (follow each of them) and
+confirming each is caught. Every later developer-tool family follows the same
+rule.
+
+Residuals, stated:
+
+- **A person with a redirected cache gets nothing cleaned**, not an error. The
+  rule's description says only the default location is covered.
+- **`%LOCALAPPDATA%` is itself an environment variable.** Every family resolves
+  through it, so a process that can set another process's environment can point
+  them all elsewhere. That is not new here, and the guard's chain — reparse
+  inspection, containment, the denylist, exclusions — still runs on every file.
+  It is not a boundary PolyScour can defend from inside.
+- **A live pip.** Its cache class tolerates vanishing files, and Windows refuses to
+  delete a file pip holds open, so the ordinary "in use, skipped" path is the
+  guard. A name-based "pip is running" condition was declined because it cannot
+  see `python -m pip` (ADR 0009). There is a millisecond window between pip
+  finding a cached wheel and opening it; the worst case is one install failing and
+  succeeding on retry.
+
 ## Non-goals
 
 PolyScour is not an antivirus and does not try to be. It can say an item is
