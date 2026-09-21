@@ -82,8 +82,9 @@ state. That was tested, not assumed:
   alone**: with a crate's `.cargo-ok` marker kept and its sources gone, builds fail
   and do not recover. Installed tools in `~/.cargo/bin` are never touched.
 - **Gradle** — **no rule.** Deleting just 10% of its cache at random left it unable
-  to build in 2 of 6 trials, and it never recovered. It would be the third-largest
-  candidate on the measured machine; the number was never the question.
+  to build in 2 of 6 trials, and it never recovered. Its size (579 MB on the
+  measured machine) was never the question; whether a half-cleaned cache still
+  works was.
 
 `docs/adr/0010` has the experiments.
 
