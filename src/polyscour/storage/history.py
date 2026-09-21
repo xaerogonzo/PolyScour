@@ -62,6 +62,14 @@ class History:
     unreadable: int
 
 
+@dataclass(frozen=True)
+class Summary:
+    """What is kept, for the Settings screen."""
+    scans: int
+    volumes: int
+    file_bytes: int
+
+
 class SnapshotStore:
     def __init__(self, db_path: Path,
                  keep_per_volume: int = DEFAULT_KEEP_PER_VOLUME) -> None:
@@ -123,10 +131,29 @@ class SnapshotStore:
                 unreadable += 1
         return History(tuple(snapshots), unreadable)
 
+    def summary(self) -> "Summary":
+        """How much is kept -- without creating the file to find out.
+
+        Counts rows rather than parsing them, so an unreadable scan is still a
+        scan somebody can clear.
+        """
+        if not self.path.exists():
+            return Summary(scans=0, volumes=0, file_bytes=0)
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, COUNT(DISTINCT volume_id) AS v "
+                "FROM storage_snapshots").fetchone()
+        return Summary(scans=row["n"], volumes=row["v"],
+                       file_bytes=self.path.stat().st_size)
+
     def clear(self, volume_id: str | None = None) -> int:
         """Delete saved scans -- one volume's, or all. Returns how many.
 
-        This deletes PolyScour's own measurements and nothing else.
+        This deletes PolyScour's own measurements and nothing else. It then
+        ``VACUUM``s, because SQLite leaves a deleted row's bytes in the file's
+        free pages until something reuses them -- and these rows hold the paths
+        of the person's largest folders and files. "Cleared" that left the paths
+        readable in the file would be a claim the file does not back up.
         """
         with self._conn() as conn:
             if volume_id is None:
@@ -135,4 +162,8 @@ class SnapshotStore:
                 cur = conn.execute(
                     "DELETE FROM storage_snapshots WHERE volume_id = ?",
                     (volume_id,))
-            return cur.rowcount
+            removed = cur.rowcount
+        # A second connection: VACUUM cannot run inside the transaction above.
+        with self._conn() as conn:
+            conn.execute("VACUUM")
+        return removed

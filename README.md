@@ -127,8 +127,14 @@ The rules that keep it from inventing a number:
 
 Growth is shown as a fact, not an alarm, and nothing beside it says what to do.
 `docs/adr/0008` has the reasoning; `docs/PRIVACY.md` says exactly what is kept —
-including that it holds the paths of your largest folders and files, and that
-deleting `storage_history.sqlite` clears it.
+including that it holds the paths of your largest folders and files. **Settings →
+Saved Storage scans → Clear saved scans** removes them, and compacts the file so
+the paths are not left behind in it.
+
+The Clean screen points here after a real cleanup — "cleaning only covers what
+PolyScour's rules are allowed to remove; Storage shows where the rest of the disk
+went" — because a cleaner's honest figure is small and this is where the rest of
+the answer is. It is a link, not a claim about what is on your disk.
 
 ## What it deliberately does not do yet
 

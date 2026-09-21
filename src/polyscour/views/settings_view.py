@@ -16,7 +16,9 @@ import customtkinter as ctk
 from polybedrock import settings as cfg
 from polybedrock.ui import theme
 
+from polyscour.formatting import human
 from polyscour.safety.policy import POLICY
+from polyscour.storage.history import DEFAULT_KEEP_PER_VOLUME
 
 
 class SettingsView(ctk.CTkFrame):
@@ -40,7 +42,12 @@ class SettingsView(ctk.CTkFrame):
         row = self._rules(body, row)
         row = self._exclusions(body, row)
         row = self._protected(body, row)
+        row = self._storage_history(body, row)
         self._privacy(body, row)
+
+    def on_show(self) -> None:
+        # Built once, shown many times, and a Storage scan adds rows meanwhile.
+        self._refresh_history()
 
     # ── sections ─────────────────────────────────────────────────────────────
 
@@ -138,6 +145,65 @@ class SettingsView(ctk.CTkFrame):
         box.insert("1.0", text)
         box.configure(state="disabled")
         return row + 1
+
+    def _storage_history(self, parent, row: int) -> int:
+        card = self._section(
+            parent, row, "Saved Storage scans",
+            f"The Storage screen keeps its last {DEFAULT_KEEP_PER_VOLUME} completed "
+            f"scans of each volume so it can say what changed since the last one. "
+            f"They hold the paths and sizes of your largest folders and files, on "
+            f"this machine only. Clearing them changes nothing else: the next scan "
+            f"simply has no earlier one to compare with, and says so.")
+        self._history_label = ctk.CTkLabel(
+            card, text="", font=theme.get("small"), anchor="w",
+            text_color=theme.color("subtext"))
+        self._history_label.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 6))
+        self._clear_history_button = ctk.CTkButton(
+            card, text="Clear saved scans", width=160,
+            command=self._clear_history)
+        self._clear_history_button.grid(row=3, column=0, sticky="w",
+                                        padx=16, pady=(0, 14))
+        self._refresh_history()
+        return row + 1
+
+    def _refresh_history(self) -> None:
+        try:
+            s = self.app.services.storage_history.summary()
+        except Exception as exc:                       # noqa: BLE001
+            # Unreadable is not empty, and must not read as "nothing saved".
+            self._history_label.configure(
+                text=f"Saved scans could not be read: {exc}")
+            self._clear_history_button.configure(state="normal")
+            return
+        if s.scans == 0:
+            self._history_label.configure(text="No saved scans.")
+            self._clear_history_button.configure(state="disabled")
+            return
+        self._history_label.configure(
+            text=(f"{s.scans:,} saved scan{'s' if s.scans != 1 else ''} of "
+                  f"{s.volumes:,} volume{'s' if s.volumes != 1 else ''}  ·  "
+                  f"{human(s.file_bytes)} on disk"))
+        self._clear_history_button.configure(state="normal")
+
+    def _confirm_clear_history(self) -> bool:
+        """The dialog, behind a seam so tests never open a real one."""
+        from tkinter import messagebox
+        return messagebox.askyesno(
+            "Clear saved scans",
+            "Delete every saved Storage scan?\n\nThey cannot be recovered. "
+            "Nothing else is affected: the next scan will just have no earlier "
+            "one to compare with.", icon="warning")
+
+    def _clear_history(self) -> None:
+        if not self._confirm_clear_history():
+            return
+        try:
+            removed = self.app.services.storage_history.clear()
+        except Exception as exc:                       # noqa: BLE001
+            self.app.set_status(f"Could not clear saved scans: {exc}")
+        else:
+            self.app.set_status(f"{removed:,} saved scan{'s' if removed != 1 else ''} cleared.")
+        self._refresh_history()
 
     def _privacy(self, parent, row: int) -> int:
         self._section(

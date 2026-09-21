@@ -39,10 +39,16 @@ SQLite file you can open, inspect, or delete.
 `storage_history.sqlite` records paths too, and for a different reason: it is how
 the Storage screen can say what changed since the last scan. It is separate from
 `history.sqlite` because a scan changed nothing on your machine and does not
-belong in the record of what PolyScour did. **Deleting the file clears it**, and
-nothing else depends on it — the next scan simply has no earlier one to compare
-with, and the screen says so rather than saying nothing changed. A scan that did
-not finish is never saved.
+belong in the record of what PolyScour did. **Settings → Saved Storage scans →
+Clear saved scans** deletes them (after a confirmation), and so does deleting the
+file. Nothing else depends on it — the next scan simply has no earlier one to
+compare with, and the screen says so rather than saying nothing changed. A scan
+that did not finish is never saved.
+
+The button does one thing a plain delete of the rows would not: it compacts the
+file afterwards. SQLite otherwise leaves a deleted row's bytes in the file until
+something reuses the space, and these rows hold folder and file paths. That is
+tested by reading the file's bytes, not by counting rows.
 
 ## What a copied or saved report contains
 
