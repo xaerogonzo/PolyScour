@@ -261,6 +261,9 @@ python -m venv venv
 .\venv\Scripts\python -m polyscour.entry
 ```
 
+`run.bat` does the last line for you with no console window (`run.bat --console`
+keeps one, so a startup traceback is visible).
+
 `polyscour.entry` is the entry point an installed build uses; `polyscour.app`
 still runs the GUI directly if you prefer. The difference matters only for the
 elevated helper, which is the *same* program under a different argument — see
