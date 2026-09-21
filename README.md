@@ -192,7 +192,10 @@ described in `docs/THREAT_MODEL.md` T20 rather than papered over here.
 
 ## Installing it
 
-> **No release is published yet**, but it has now been installed and measured.
+> **[v0.2.0 is published](https://github.com/xaerogonzo/PolyScour/releases/tag/v0.2.0)**
+> — `PolyScour-Setup-0.2.0.exe`, with its SHA-256 in the release notes. It is
+> **not code-signed**, so SmartScreen will warn you: verify the hash, or build it
+> yourself with `.\build.ps1`. It has been installed and measured.
 > `C:\Program Files\PolyScour` came out administrator-only — checked as an
 > ordinary user, by permissions *and* by trying to write into it, across all
 > 981 installed files rather than only the one with PolyScour's name on it. The

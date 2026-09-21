@@ -38,15 +38,19 @@ jobs:
 
       # PolyScour depends on the shared substrate.
       #
-      # NOT YET PINNED, and this comment says so rather than claiming
-      # otherwise: PolyBedrock carries no tags, so there is no supported
-      # revision to name yet. `master` here means this job proves PolyScour
-      # works against whatever the substrate looks like today -- which is
-      # useful, but it is not a compatibility guarantee, and master-vs-master
-      # can go green for a pair of changes that would not work against any
-      # released version of either. Pinning is tracked with the versioning
-      # policy in ../PolyBedrock/docs/adr/0001; `polybedrock-core>=0.1` in
-      # pyproject.toml needs a real upper bound at the same time.
+      # `master` on purpose, not an oversight. This job answers one question:
+      # does PolyScour's HEAD work with the substrate's HEAD today. It is not a
+      # compatibility guarantee -- master-vs-master can go green for a pair of
+      # changes that would work against no released version of either, and a
+      # red run does not say which side broke.
+      #
+      # The guarantee lives elsewhere. pyproject.toml claims
+      # `polybedrock-core>=0.1,<0.2` (and the same for -ui), and PolyBedrock's
+      # own CI verifies that claim by running a PolyScour revision *pinned by
+      # SHA* against the substrate under change -- ../PolyBedrock/docs/adr/0001.
+      # That pin drifts silently; `pin_distance.py` there reports how far.
+      # PolyBedrock carries no tags yet, so there is no released revision to
+      # pin this job to even if we wanted to.
       - uses: actions/checkout@v7
         with:
           repository: xaerogonzo/PolyBedrock
