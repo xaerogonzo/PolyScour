@@ -557,3 +557,71 @@ def test_a_path_that_is_not_a_mount_point_has_no_identity():
     """It fails rather than guessing, which is why callers pass a volume root."""
     assert volumes._volume_id(Path("C:/Windows")) is None
     assert volumes._volume_id(Path("Q:/definitely-not-mounted")) is None
+
+
+# ── what is kept, and clearing it for real ───────────────────────────────────
+
+def test_a_summary_of_a_store_never_written_says_zero_and_does_not_create_it(tmp_path):
+    store = _store(tmp_path)
+    s = store.summary()
+    assert (s.scans, s.volumes, s.file_bytes) == (0, 0, 0)
+    assert not store.path.exists()
+
+
+def test_the_summary_counts_scans_volumes_and_unreadable_rows_alike(tmp_path):
+    store = _store(tmp_path)
+    for d in range(3):
+        store.save(_at(d, volume_id=VOL_A))
+    store.save(_at(0, volume_id=VOL_B))
+    with closing(sqlite3.connect(store.path)) as conn, conn:
+        conn.execute("INSERT INTO storage_snapshots "
+                     "(volume_id, taken_at, schema_version, payload) "
+                     "VALUES (?, ?, 1, ?)", (VOL_A, T0.isoformat(), "{garbage"))
+
+    s = store.summary()
+    # The damaged row is still a row somebody can clear, so it is counted.
+    assert (s.scans, s.volumes) == (5, 2)
+    assert s.file_bytes == store.path.stat().st_size > 0
+
+
+def test_clearing_removes_the_paths_from_the_file_and_not_just_from_the_table(tmp_path):
+    """SQLite leaves a deleted row's bytes in a free page until it is reused.
+
+    These rows hold the paths of a person's largest folders. "Cleared" while the
+    paths still sit readable in the file would be a claim the file contradicts,
+    so this reads the file's bytes -- and shows the check can fail: a plain
+    DELETE, which is what a naive clear does, leaves them behind.
+    """
+    # Searched for without its backslashes: the path is stored as JSON, which
+    # doubles them, and a needle that never matched would make this pass for free.
+    needle = b"Secret-Project-Folder-XYZ"
+    secret = _at(0, directories=(
+        RetainedDir(r"C:\Users\me\Secret-Project-Folder-XYZ", 5 * GiB, 1),))
+
+    naive = _store(tmp_path / "naive")
+    naive.save(secret)
+    assert needle in naive.path.read_bytes()
+    with closing(sqlite3.connect(naive.path)) as conn, conn:
+        conn.execute("DELETE FROM storage_snapshots")          # no VACUUM
+    assert needle in naive.path.read_bytes(), \
+        "control: a bare DELETE leaves the path in the file"
+
+    real = _store(tmp_path / "real")
+    real.save(secret)
+    assert real.clear() == 1
+    assert needle not in real.path.read_bytes()
+    assert real.history(VOL_A).snapshots == ()
+
+
+def test_clearing_one_volume_also_vacuums_and_leaves_the_others(tmp_path):
+    store = _store(tmp_path)
+    store.save(_at(0, volume_id=VOL_A,
+                   directories=(RetainedDir(r"C:\Only-On-A-Marker", GiB, 1),)))
+    store.save(_at(0, volume_id=VOL_B,
+                   directories=(RetainedDir(r"D:\Only-On-B-Marker", GiB, 1),)))
+    assert store.clear(VOL_A) == 1
+
+    raw = store.path.read_bytes()
+    assert b"Only-On-A-Marker" not in raw
+    assert b"Only-On-B-Marker" in raw
+    assert len(store.history(VOL_B).snapshots) == 1

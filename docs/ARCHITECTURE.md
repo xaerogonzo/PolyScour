@@ -286,6 +286,13 @@ shown — the one broad `except` in the package — because a scan that took two
 minutes must not be lost to the history beside it, and must never be reported as
 "nothing changed".
 
+`clear()` runs `VACUUM` afterwards. The rows hold folder and file paths, and
+SQLite leaves a deleted row's bytes in the file until the space is reused, so a
+cleared table with the paths still readable in the file would be a claim the
+file contradicts. Settings reads `summary()` and offers the clear; the Clean
+screen, after a real cleanup, offers a link to Storage — navigation only, and
+with no claim about what is on the disk.
+
 **Sentences live in `storage/report.py`, not in the view.** The screen and the
 text export both render `HistorySummary`, so "at least", "these need not add up"
 and "not kept" cannot be worded differently in two places. That module and

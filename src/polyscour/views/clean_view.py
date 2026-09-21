@@ -96,7 +96,7 @@ class CleanView(ctk.CTkFrame):
                                                           sticky="w")
 
         self.scan_btn = ctk.CTkButton(header, text="Scan", width=110,
-                                      command=self._scan)
+                                      command=self._scan_clicked)
         self.scan_btn.grid(row=0, column=2, padx=4)
         self.cancel_btn = ctk.CTkButton(header, text="Cancel", width=90,
                                         fg_color="transparent", border_width=1,
@@ -146,7 +146,37 @@ class CleanView(ctk.CTkFrame):
         self._last_result = None
         self._plan = None
 
+        # Shown after a real cleanup, and only then. It is navigation, not an
+        # action: a cleaner's honest figure is small, and this is the one place
+        # that can say where the rest of the disk is. It makes no claim about
+        # what is *on* the disk -- that is Storage's job, with evidence.
+        self.storage_hint = ctk.CTkFrame(footer, fg_color="transparent")
+        self.storage_hint.grid(row=1, column=0, columnspan=4, sticky="ew",
+                               pady=(8, 0))
+        self.storage_hint.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            self.storage_hint, anchor="w", justify="left", wraplength=640,
+            font=theme.get("small"), text_color=theme.color("subtext"),
+            text=("Cleaning only covers what PolyScour's rules are allowed to "
+                  "remove. Storage shows where the rest of the disk went.")
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(self.storage_hint, text="Open Storage", width=130,
+                      fg_color=theme.color("card2"),
+                      command=lambda: self.app.navigate("storage")
+                      ).grid(row=0, column=1, padx=(12, 0))
+        self.storage_hint.grid_remove()
+
     # ── scanning ─────────────────────────────────────────────────────────────
+
+    def _hide_storage_hint(self) -> None:
+        self.storage_hint.grid_remove()
+
+    def _scan_clicked(self) -> None:
+        """The Scan button. A scan the person asked for ends the previous
+        cleanup's moment; the verification scan after a cleanup calls
+        ``_scan`` directly and must not."""
+        self._hide_storage_hint()
+        self._scan()
 
     def _scan(self) -> None:
         self._cancel = threading.Event()
@@ -297,6 +327,7 @@ class CleanView(ctk.CTkFrame):
 
         self.clean_btn.configure(state="disabled")
         self.retry_btn.grid_remove()
+        self._hide_storage_hint()
         self.app.set_status("Previewing" if plan.dry_run else "Cleaning")
         self.app.run_off_thread(
             lambda: self.app.services.executor.execute(plan), self._cleaned)
@@ -330,6 +361,7 @@ class CleanView(ctk.CTkFrame):
         self._offer_elevation(result)
 
         if not result.dry_run:
+            self.storage_hint.grid()
             self._scan()          # verify by re-scanning rather than by assuming
 
     # ── the administrator offer ──────────────────────────────────────────────

@@ -347,3 +347,175 @@ def test_the_services_keep_storage_history_apart_from_the_ledger(app):
     history = app.services.storage_history
     assert history.path.name == "storage_history.sqlite"
     assert history.path != app.services.ledger.path
+
+
+# ── Settings: the saved Storage scans ────────────────────────────────────────
+
+@pytest.fixture
+def saved_scans(app, tmp_path, monkeypatch):
+    """The Settings view, pointed at a store of its own."""
+    from polyscour.storage.history import SnapshotStore
+
+    app.navigate("settings")
+    view = app.get_view("settings")
+    store = SnapshotStore(tmp_path / "storage_history.sqlite")
+    monkeypatch.setattr(app.services, "storage_history", store)
+    monkeypatch.setattr(view, "_confirm_clear_history", lambda: True)
+    return view, store
+
+
+def _keep(store, *, days=(0, 1), volume=None):
+    from datetime import timedelta
+
+    from _storage_fixtures import T0, VOL_A, snap
+
+    for d in days:
+        store.save(snap(taken_at=T0 + timedelta(days=d),
+                        volume_id=volume or VOL_A))
+
+
+def test_settings_says_when_nothing_is_saved_and_offers_nothing_to_clear(saved_scans):
+    view, _ = saved_scans
+    view._refresh_history()
+    assert view._history_label.cget("text") == "No saved scans."
+    assert view._clear_history_button.cget("state") == "disabled"
+
+
+def test_settings_counts_what_is_kept(saved_scans):
+    from _storage_fixtures import VOL_B
+
+    view, store = saved_scans
+    _keep(store, days=(0, 1))
+    _keep(store, days=(0,), volume=VOL_B)
+    view._refresh_history()
+
+    text = view._history_label.cget("text")
+    assert text.startswith("3 saved scans of 2 volumes")
+    assert view._clear_history_button.cget("state") == "normal"
+
+
+def test_settings_notices_scans_saved_after_it_was_built(saved_scans):
+    view, store = saved_scans
+    view._refresh_history()
+    assert view._history_label.cget("text") == "No saved scans."
+    _keep(store, days=(0,))
+    view.on_show()                                   # what navigating here does
+    assert view._history_label.cget("text").startswith("1 saved scan of 1 volume")
+
+
+def test_declining_the_confirmation_clears_nothing(saved_scans, monkeypatch):
+    view, store = saved_scans
+    _keep(store)
+    monkeypatch.setattr(view, "_confirm_clear_history", lambda: False)
+    view._clear_history()
+    assert store.summary().scans == 2
+
+
+def test_confirming_clears_everything_and_says_how_many(saved_scans, app):
+    view, store = saved_scans
+    _keep(store, days=(0, 1, 2))
+    view._clear_history()
+
+    assert store.summary().scans == 0
+    assert app.status.cget("text") == "3 saved scans cleared."
+    assert view._history_label.cget("text") == "No saved scans."
+
+
+def test_a_failed_clear_says_so_and_does_not_pretend_the_store_is_empty(saved_scans, app, monkeypatch):
+    view, store = saved_scans
+    _keep(store)
+
+    def locked(volume_id=None):
+        raise OSError("file is locked")
+
+    monkeypatch.setattr(store, "clear", locked)
+    view._clear_history()
+
+    assert app.status.cget("text") == "Could not clear saved scans: file is locked"
+    assert view._history_label.cget("text").startswith("2 saved scans")
+
+
+def test_a_store_that_cannot_be_read_is_not_shown_as_empty(saved_scans, monkeypatch):
+    import sqlite3
+
+    view, store = saved_scans
+
+    def broken():
+        raise sqlite3.DatabaseError("file is not a database")
+
+    monkeypatch.setattr(store, "summary", broken)
+    view._refresh_history()
+    assert "could not be read" in view._history_label.cget("text")
+    assert view._history_label.cget("text") != "No saved scans."
+    assert view._clear_history_button.cget("state") == "normal"   # so it can be fixed
+
+
+# ── Clean: the pointer to Storage ────────────────────────────────────────────
+
+@pytest.fixture
+def clean_screen(app, monkeypatch):
+    app.navigate("clean")
+    view = app.get_view("clean")
+    # The real `_scan` runs -- it is the verification re-scan a cleanup triggers,
+    # and whether it disturbs the pointer is part of what is tested. Only the
+    # hop to a worker thread is stubbed, so nothing walks this machine.
+    monkeypatch.setattr(app, "run_off_thread", lambda work, done: None)
+    view.storage_hint.grid_remove()
+    return view
+
+
+def _cleanup(*, dry_run: bool):
+    from datetime import datetime, timezone
+
+    from polyscour.contracts import ActionResult, OperationOutcome
+
+    now = datetime.now(timezone.utc)
+    return ActionResult(operation_id="op", outcome=OperationOutcome.SUCCESS,
+                        started_at=now, finished_at=now, bytes_freed=5_000_000,
+                        items_completed=3, dry_run=dry_run)
+
+
+def _hint_shown(view) -> bool:
+    return bool(view.storage_hint.grid_info())      # {} once grid_remove()d
+
+
+def test_the_storage_pointer_is_absent_until_something_was_cleaned(clean_screen):
+    assert not _hint_shown(clean_screen)
+
+
+def test_a_real_cleanup_points_at_storage(clean_screen):
+    clean_screen._cleaned(_cleanup(dry_run=False), None)
+    assert _hint_shown(clean_screen)
+
+
+def test_a_dry_run_and_a_failed_cleanup_do_not(clean_screen):
+    clean_screen._cleaned(_cleanup(dry_run=True), None)
+    assert not _hint_shown(clean_screen)
+    clean_screen._cleaned(None, OSError("could not finish"))
+    assert not _hint_shown(clean_screen)
+
+
+def test_the_pointer_survives_the_verification_scan_and_not_the_next_one_you_ask_for(clean_screen):
+    clean_screen._cleaned(_cleanup(dry_run=False), None)   # calls _scan(), as it does live
+    assert _hint_shown(clean_screen)
+
+    clean_screen._scan_clicked()                           # the Scan button
+    assert not _hint_shown(clean_screen)
+
+
+def test_the_pointer_says_what_cleaning_covers_and_makes_no_claim_about_the_disk(clean_screen):
+    labels = " ".join(_labels(clean_screen.storage_hint))
+    assert "only covers what PolyScour's rules are allowed to remove" in labels
+    assert "Storage shows where the rest of the disk went" in labels
+    # Evidence is Storage's job; this screen has none, so it asserts none.
+    for claim in ("mostly", "cache", "junk", "wasted", "should"):
+        assert claim not in labels.lower()
+
+
+def test_open_storage_navigates_and_does_nothing_else(clean_screen, app, monkeypatch):
+    seen = []
+    monkeypatch.setattr(app, "navigate", lambda key: seen.append(key))
+    (button,) = [w for w in clean_screen.storage_hint.winfo_children()
+                 if isinstance(w, ctk.CTkButton)]
+    button.invoke()
+    assert seen == ["storage"]
