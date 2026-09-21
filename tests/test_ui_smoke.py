@@ -149,3 +149,201 @@ def test_a_large_result_renders_a_row_per_rule_not_per_file(app):
 
     assert len(view._groups) == 2, "one row per rule, not per file"
     assert len(view._selected()) == 36_194, "selecting a group takes its findings"
+
+
+# ── the Storage screen ───────────────────────────────────────────────────────
+#
+# Real widgets, a fake disk: `analyse` is replaced by a constructed report, the
+# store lives in tmp_path, and the shell's thread hop runs inline. What is under
+# test is the wiring -- scan -> review -> render -> export -- and the invariant
+# that nothing on the screen acts on a finding.
+
+def _labels(widget) -> list[str]:
+    out = []
+    for child in widget.winfo_children():
+        if isinstance(child, ctk.CTkLabel):
+            out.append(child.cget("text"))
+        out.extend(_labels(child))
+    return out
+
+
+def _buttons(widget) -> list[str]:
+    out = []
+    for child in widget.winfo_children():
+        if isinstance(child, ctk.CTkButton):
+            out.append(child.cget("text"))
+        out.extend(_buttons(child))
+    return out
+
+
+@pytest.fixture
+def storage(app, tmp_path, monkeypatch):
+    """The Storage view, fresh: no report, export off, its own empty store."""
+    from polyscour.storage.history import SnapshotStore
+    from polyscour.views import storage_view
+
+    app.navigate("storage")
+    view = app.get_view("storage")
+    if not hasattr(view, "_scan_button"):
+        pytest.skip("no fixed volumes were enumerated on this machine")
+
+    monkeypatch.setattr(app.services, "storage_history",
+                        SnapshotStore(tmp_path / "storage_history.sqlite"))
+    def inline(work, done):
+        # The contract of App.run_off_thread: a failure in `work` reaches the
+        # callback as (None, exc). Letting it escape would leave the view
+        # mid-scan, and every later test would inherit that.
+        try:
+            result = work()
+        except Exception as exc:                            # noqa: BLE001
+            done(None, exc)
+        else:
+            done(result, None)
+
+    monkeypatch.setattr(app, "run_off_thread", inline)
+    view._cancel = None
+    view._scan_button.configure(text="Scan")
+    view._report = view._review = None
+    view._set_export_enabled(False)
+    view._status.configure(text="")
+    return view, storage_view
+
+
+def _scan(storage, monkeypatch, *, day=0, used=100, **over):
+    from datetime import timedelta
+
+    from _storage_fixtures import GiB, T0, report
+
+    view, sv = storage
+    finished = report(finished_at=T0 + timedelta(days=day),
+                      used_at_start=used * GiB, used_at_end=used * GiB, **over)
+    monkeypatch.setattr(sv, "analyse", lambda request, cancel: finished)
+    view._start()
+    return view
+
+
+def test_the_report_buttons_are_off_until_a_scan_exists_and_on_after(storage, monkeypatch):
+    view, _ = storage
+    assert view._copy_button.cget("state") == "disabled"
+    assert view._save_button.cget("state") == "disabled"
+
+    _scan(storage, monkeypatch)
+    assert view._copy_button.cget("state") == "normal"
+    assert view._save_button.cget("state") == "normal"
+
+
+def test_a_failed_scan_leaves_export_off_and_says_so(storage, monkeypatch):
+    view, sv = storage
+
+    def boom(request, cancel):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(sv, "analyse", boom)
+    view._start()
+    assert "Scan failed" in view._status.cget("text")
+    assert view._copy_button.cget("state") == "disabled"
+    assert view._cancel is None
+
+
+def test_a_second_scan_shows_what_changed_since_the_first(storage, monkeypatch):
+    view = _scan(storage, monkeypatch, day=0, used=100)
+    assert any("first completed scan" in t for t in _labels(view._body))
+
+    _scan(storage, monkeypatch, day=7, used=112)
+    assert "+12.0 GB used on C:" in _labels(view._body)
+
+
+def test_the_screen_and_the_export_say_the_same_thing(storage, monkeypatch):
+    from polyscour.storage import report as sr
+
+    _scan(storage, monkeypatch, day=0, used=100)
+    view = _scan(storage, monkeypatch, day=7, used=112)
+    s = sr.summarise(view._review)
+
+    assert s.headline in _labels(view._body)
+    assert s.headline in view._text()
+    assert s.attribution in view._text()
+
+
+def test_a_history_fault_loses_neither_the_scan_nor_the_truth_about_it(storage, monkeypatch, app):
+    def locked(volume_id):
+        import sqlite3
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(app.services.storage_history, "history", locked)
+    view = _scan(storage, monkeypatch)
+
+    texts = " ".join(_labels(view._body))
+    assert "accounted for" in texts                         # the scan survived
+    assert "Saved history could not be used" in texts       # and the fault is said
+    assert view._copy_button.cget("state") == "normal"
+
+
+def test_copy_puts_the_report_on_the_clipboard_and_warns_about_names(storage, monkeypatch, app):
+    import tkinter
+
+    view = _scan(storage, monkeypatch)
+    view._copy()
+    try:
+        clip = app.clipboard_get()
+    except tkinter.TclError:
+        pytest.skip("this session has no usable clipboard")
+
+    assert clip == view._text()
+    assert "PolyScour storage report" in clip
+    assert "names from this computer" in view._status.cget("text")
+
+
+def test_save_writes_the_report_where_the_person_chose(storage, monkeypatch, tmp_path):
+    from _storage_fixtures import T0
+
+    view = _scan(storage, monkeypatch)
+    target = tmp_path / "chosen.txt"
+    offered = []
+    monkeypatch.setattr(view, "_choose_path",
+                        lambda name: offered.append(name) or str(target))
+    view._save()
+
+    assert target.read_text(encoding="utf-8") == view._text()
+    assert offered == [f"polyscour-storage-C-{T0.astimezone():%Y%m%d}.txt"]
+    assert str(target) in view._status.cget("text")
+
+
+def test_cancelling_the_save_dialog_writes_nothing_and_says_nothing(storage, monkeypatch, tmp_path):
+    view = _scan(storage, monkeypatch)
+    monkeypatch.setattr(view, "_choose_path", lambda name: None)
+    before = set(tmp_path.iterdir())
+    view._status.configure(text="")
+    view._save()
+    assert set(tmp_path.iterdir()) == before
+    assert view._status.cget("text") == ""
+
+
+def test_a_path_that_cannot_be_written_is_reported_not_raised(storage, monkeypatch, tmp_path):
+    view = _scan(storage, monkeypatch)
+    monkeypatch.setattr(view, "_choose_path", lambda name: str(tmp_path))  # a directory
+    view._save()
+    assert view._status.cget("text").startswith("Could not save the report")
+
+
+def test_no_control_on_the_screen_acts_on_a_finding(storage, monkeypatch):
+    """The invariant this screen exists to keep, checked on the real widgets.
+
+    Two buttons sit beside Scan and they act on the *report*. Nothing inside the
+    results -- no row, no card -- may be a button at all.
+    """
+    _scan(storage, monkeypatch, day=0, used=100)
+    view = _scan(storage, monkeypatch, day=7, used=112)
+
+    assert _buttons(view._body) == []
+    assert sorted(_buttons(view._controls)) == ["Copy report", "Save report…",
+                                                "Scan"]
+
+
+def test_the_services_keep_storage_history_apart_from_the_ledger(app):
+    """A scan did nothing to this machine, and the ledger is what PolyScour did.
+    A snapshot listed beside an operation would blur the distinction the ledger
+    exists to keep (adr/0008)."""
+    history = app.services.storage_history
+    assert history.path.name == "storage_history.sqlite"
+    assert history.path != app.services.ledger.path

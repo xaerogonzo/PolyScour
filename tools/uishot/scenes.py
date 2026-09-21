@@ -326,18 +326,14 @@ def startup(session):
         startup_view.list_items = real
 
 
-@scene("storage")
-def storage(session):
-    """The measured tree, the residual, and the three read-only lists.
+def _storage_fixture():
+    """``(volume, other_volumes, report)`` -- a scan that looks like a real disk.
 
-    Constructed, and it has to be: a real scan of C: takes minutes, returns
-    different numbers every run, and its largest folders are whatever this
-    machine happens to have installed. The golden would be a photograph of one
-    developer's disk.
-
-    The fixed report covers what the screen exists to show -- a scan that
-    stopped at its time budget, a residual larger than a rounding error, every
-    kind of diagnostic note, and enough folders and files to fill the lists.
+    Shared by the storage scenes so the history shots photograph the same
+    machine the measured shot does. The idle screen lists real volumes, and this
+    machine's used-bytes move between runs -- the first attempt at the golden
+    drifted by 77 px on the capacity line alone -- so the volumes are constructed
+    too, and each scene patches ``fixed_volumes`` with them.
     """
     from pathlib import Path
 
@@ -345,12 +341,11 @@ def storage(session):
                                             ResidualReason, StopReason,
                                             VolumeReport)
     from polyscour.storage.volumes import Volume
-    from polyscour.views import storage_view
 
     GB = 1024 ** 3
     volume = Volume(root=Path("C:\\"), fstype="NTFS",
                     total_bytes=953 * GB, used_bytes=807 * GB,
-                    free_bytes=146 * GB)
+                    free_bytes=146 * GB, volume_id=_VOLUME_C)
 
     root = DirectoryNode(path=Path("C:\\"))
     for name, size in (("Games", 214 * GB), ("Windows", 71 * GB),
@@ -367,6 +362,7 @@ def storage(session):
     report = VolumeReport(
         volume=volume, root=root,
         stop_reason=StopReason.TIME_EXHAUSTED,
+        started_at=_NEWER, finished_at=_NEWER,
         elapsed_seconds=120.0, entries_examined=846_301,
         directories_examined=94_722, max_entries=2_000_000, max_seconds=120.0,
         used_at_start=807 * GB, used_at_end=807 * GB,
@@ -389,17 +385,37 @@ def storage(session):
         ".dll": 11 * GB, ".exe": 6 * GB, "(no extension)": 3 * GB,
     }
 
-    # The idle screen lists real volumes, and this machine's used-bytes move
-    # between runs -- the first attempt at this golden drifted by 77 px on the
-    # capacity line alone. Patched the same way the startup scene patches
-    # `list_items`, so the shot is comparable rather than a photograph of
-    # whatever the disk happened to hold that minute.
     others = [
         Volume(root=Path("D:\\"), fstype="NTFS", total_bytes=1863 * GB,
                used_bytes=1484 * GB, free_bytes=379 * GB),
         Volume(root=Path("F:\\"), fstype="NTFS", total_bytes=931 * GB,
                used_bytes=631 * GB, free_bytes=300 * GB),
     ]
+    return volume, others, report
+
+
+# One volume, two moments a week apart. Fixed so the history shots are comparable.
+_VOLUME_C = r"\\?\Volume{c0c0c0c0-0000-4000-8000-00000000000c}" + "\\"
+_OLDER = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+_NEWER = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+
+
+@scene("storage")
+def storage(session):
+    """The measured tree, the residual, and the three read-only lists.
+
+    Constructed, and it has to be: a real scan of C: takes minutes, returns
+    different numbers every run, and its largest folders are whatever this
+    machine happens to have installed. The golden would be a photograph of one
+    developer's disk.
+
+    The fixed report covers what the screen exists to show -- a scan that
+    stopped at its time budget, a residual larger than a rounding error, every
+    kind of diagnostic note, and enough folders and files to fill the lists.
+    """
+    from polyscour.views import storage_view
+
+    volume, others, report = _storage_fixture()
     real = storage_view.volumes.fixed_volumes
     storage_view.volumes.fixed_volumes = lambda: [volume, *others]
     try:
@@ -408,5 +424,83 @@ def storage(session):
 
         view._render(report)
         session.shot("storage_measured")
+    finally:
+        storage_view.volumes.fixed_volumes = real
+
+
+@scene("storage-history")
+def storage_history(session):
+    """What changed since the last scan -- and the cases where nothing can be said.
+
+    Three shots: a real comparison (with rows that are exact and rows that are
+    "at least"), the first scan ever kept, and a scan that stopped early -- which
+    keeps Windows' own figure but refuses to say *where*.
+
+    The two snapshots are constructed, coherently: the folder rows add up to the
+    measured change, and the residual moved the other way, so the three figures
+    the screen leads with read as they would on a real disk. Nothing here touches
+    the store; a real scan writes to ``POLYSCOUR_DATA_DIR``, which this harness
+    has redirected.
+    """
+    import dataclasses
+
+    from polyscour.storage.analyser import StopReason
+    from polyscour.storage.comparison import compare
+    from polyscour.storage.history import SaveOutcome
+    from polyscour.storage.review import Review
+    from polyscour.storage.snapshots import RetainedDir, RetainedFile, Snapshot
+    from polyscour.views import storage_view
+
+    GB = 1024 ** 3
+    volume, others, report = _storage_fixture()
+    report.stop_reason = StopReason.COMPLETED
+    newer = Snapshot.from_report(report)
+
+    older = dataclasses.replace(
+        newer, taken_at=_OLDER, used_at_start=795 * GB, used_at_end=795 * GB,
+        measured_bytes=newer.measured_bytes - 20 * GB,
+        permission_denied_directories=409,
+        directories=(
+            RetainedDir(r"C:\Games", 200 * GB, 1),
+            RetainedDir(r"C:\Windows", 71 * GB, 1),
+            RetainedDir(r"C:\Users", 61 * GB, 1),
+            RetainedDir(r"C:\Program Files", 17 * GB, 1),
+            RetainedDir(r"C:\Program Files (x86)", 6 * GB, 1),
+        ),
+        files=(
+            RetainedFile(r"C:\Games\Mercs\Content.pak", 61 * GB),
+            RetainedFile(r"C:\pagefile.sys", 38 * GB),
+            RetainedFile(r"C:\Models\weights.safetensors", 22 * GB),
+            RetainedFile(r"C:\hiberfil.sys", 13 * GB),
+            RetainedFile(r"C:\Old\backup.zip", 12 * GB),
+        ),
+        by_extension={".pak": 70 * GB, ".sys": 51 * GB, ".safetensors": 22 * GB,
+                      ".dll": 11 * GB, ".exe": 6 * GB, "(no extension)": 3 * GB,
+                      ".zip": 12 * GB})
+
+    compared = Review(snapshot=newer, baseline=older,
+                      comparison=compare(older, newer), saved=SaveOutcome.SAVED)
+    first = Review(snapshot=newer, baseline=None, comparison=None,
+                   saved=SaveOutcome.SAVED)
+
+    # A scan that stopped early: Windows' figure survives, attribution does not.
+    _, _, stopped_report = _storage_fixture()       # its stop_reason is TIME_EXHAUSTED
+    stopped =dataclasses.replace(newer, stop_reason=StopReason.TIME_EXHAUSTED)
+    refused = Review(snapshot=stopped, baseline=older,
+                     comparison=compare(older, stopped),
+                     saved=SaveOutcome.NOT_COMPLETE, unreadable=1)
+
+    real = storage_view.volumes.fixed_volumes
+    storage_view.volumes.fixed_volumes = lambda: [volume, *others]
+    try:
+        view = session.mount(storage_view.StorageView, app=_app())
+        view._render(report, compared)
+        session.shot("storage_compared")
+
+        view._render(report, first)
+        session.shot("storage_first_scan")
+
+        view._render(stopped_report, refused)
+        session.shot("storage_compared_incomplete")
     finally:
         storage_view.volumes.fixed_volumes = real

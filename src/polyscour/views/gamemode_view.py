@@ -29,7 +29,7 @@ from polybedrock.ui import theme
 
 from polyscour.gamemode import session as gm
 from polyscour.gamemode.policy import veto
-from polyscour.views.dashboard_view import human
+from polyscour.formatting import human
 
 
 class GameModeView(ctk.CTkFrame):

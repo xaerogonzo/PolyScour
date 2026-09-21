@@ -71,10 +71,13 @@ frees a few hundred megabytes, and "we freed 900 MB" tells you nothing about the
 other 499 GB. This screen is what makes the real answer sayable: your disk is
 full of things a cleaner must never touch.
 
-**It changes nothing, and there is nothing on it to click that would.** No
-Delete, no Clean, no "optimise". Folders are sorted by size because size is a
-fact; a button beside that fact would turn it into a recommendation, and this
-program does not make those.
+**It never deletes, moves or modifies anything on your disk or in Windows, and
+there is nothing on it to click that would.** No Delete, no Clean, no
+"optimise", and no button on any folder or file row. Folders are sorted by size
+because size is a fact; a button beside that fact would turn it into a
+recommendation, and this program does not make those. Two buttons sit beside
+Scan and they act on the *report*, not on anything in it: **Copy report**, and
+**Save report…**, which writes one file, only where you choose.
 
 The number it is most careful about is the one it *cannot* account for. A walk
 never adds up to what Windows reports as used — the page file, the file table,
@@ -96,6 +99,36 @@ labelled plainly where it is not:
 
 It never asks for administrator rights to make the number look better. An
 unreadable folder stays unreadable and stays counted.
+
+### What changed since the last scan
+
+Each finished scan is kept, locally, so the next one can say where the space
+went. It leads with **Windows' own figure** — used space, then and now — because
+that needs no scan to have finished, and then says what the scans account for and
+what moved in the part they cannot see. Those are reported separately and are
+**not** made to add up: they cover different ground, and a screen that forced
+them to reconcile would be inventing precision.
+
+The rules that keep it from inventing a number:
+
+- **A folder is only "new" if the earlier scan could not have been hiding it.**
+  A scan keeps its largest 500 folders and records how big an unlisted one could
+  still be. Something present now and absent then is reported as *"at least"*
+  the part above that bound — or not at all, if the bound leaves no evidence it
+  changed. A retention cutoff never becomes growth.
+- **The same disk, not the same drive letter.** Scans are matched by Windows'
+  volume identifier. A disk that took over a letter is not compared with the one
+  it replaced, and a volume with no identifier is not compared at all.
+- **A scan that stopped early is never a baseline**, and is not kept. If the
+  *new* scan stopped early you still get Windows' figure, and the screen says it
+  cannot say where.
+- **"No earlier scan" is not "nothing changed".** The first scan says it is the
+  first. A saved scan that cannot be read is counted and shown, not skipped.
+
+Growth is shown as a fact, not an alarm, and nothing beside it says what to do.
+`docs/adr/0008` has the reasoning; `docs/PRIVACY.md` says exactly what is kept —
+including that it holds the paths of your largest folders and files, and that
+deleting `storage_history.sqlite` clears it.
 
 ## What it deliberately does not do yet
 
