@@ -26,7 +26,7 @@ from polybedrock.ui import theme
 from polyscour.cleaning import planner
 from polyscour.cleaning.executor import Executor
 from polyscour.contracts import RiskLevel, SkipReason
-from polyscour.views.dashboard_view import human
+from polyscour.formatting import human
 
 _RISK_COLOUR = {
     RiskLevel.SAFE: "#7ec699",

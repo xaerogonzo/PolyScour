@@ -27,6 +27,7 @@ from polyscour.cleaning.scanner import Scanner
 from polyscour.gamemode import session as gamemode
 from polyscour.ledger import Ledger
 from polyscour.safety.guard import Guard
+from polyscour.storage.history import SnapshotStore
 from polyscour.vault import Vault
 
 APP_TITLE = "PolyScour"
@@ -64,6 +65,10 @@ class Services:
         self.guard = Guard(exclusions=exclusions)
         self.vault = Vault(paths.vault_dir())
         self.ledger = Ledger(paths.ledger_path())
+        # Its own file, not the ledger: a scan did nothing to this machine, and
+        # the ledger is the record of what PolyScour did. The file does not
+        # exist until the first Storage scan asks it something. adr/0008.
+        self.storage_history = SnapshotStore(paths.storage_history_path())
         self.scanner = Scanner(guard=self.guard)
         self.executor = Executor(vault=self.vault, ledger=self.ledger,
                                  guard=self.guard)

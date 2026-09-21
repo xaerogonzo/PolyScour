@@ -15,15 +15,8 @@ import customtkinter as ctk
 from polybedrock import win_security
 from polybedrock.ui import theme
 
+from polyscour.formatting import human
 from polyscour.integrations import polyshield
-
-
-def human(n: int) -> str:
-    for unit in ("bytes", "KB", "MB", "GB", "TB"):
-        if n < 1024 or unit == "TB":
-            return f"{n:,.0f} {unit}" if unit == "bytes" else f"{n:.1f} {unit}"
-        n /= 1024.0
-    return f"{n:.1f} TB"
 
 
 class Card(ctk.CTkFrame):

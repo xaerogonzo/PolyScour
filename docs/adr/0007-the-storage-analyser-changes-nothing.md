@@ -176,3 +176,21 @@ program cannot honestly make.
 That is not an argument that it can never be built. It is an argument that it
 needs its own threat-model section first, in the order this project already
 uses.
+
+## Addendum — what "changes nothing" meant (2026-09-21)
+
+The title, and the consequence "no action controls anywhere on the screen", were
+worded more broadly than the rule they stood for. The rule is the top invariant:
+**a finding is not a recommendation**, so no Delete, Clean or Remove beside a
+list sorted by size, and no button on any row. It was never a rule against the
+screen producing a report, and it stopped being literally true once the screen
+kept a history of its own scans.
+
+`docs/adr/0008` (Decision 6) records the narrowing: the analyser and the screen
+change nothing on the disk or in Windows; the screen keeps a local history of its
+own scans; and **Copy report** and **Save report…** act on the report, never on a
+finding. The test that guards the real rule now checks it directly on the
+widgets — no button anywhere inside the results, and exactly three beside them.
+
+The decisions above are unchanged. The analyser still calls no guard, still has
+no executor, and still reports its residual as a first-class number.

@@ -62,6 +62,8 @@ src/polyscour/
 ├── paths.py          polybedrock.paths shim; app_name="PolyScour", scope="user"
 ├── settings.py       polybedrock.settings shim + PolyScour DEFAULTS
 ├── contracts.py      Finding, ScanResult, ActionPlan, ActionResult, outcomes
+├── formatting.py     human() and signed(): how sizes are written. Not in a view,
+│                     so storage/ never imports a GUI module for a string
 ├── safety/
 │   ├── policy.py     RootFamily, RuleTrustPolicy, POLICY — THE AUTHORITY
 │   ├── reparse.py    Component-wise reparse inspection, before canonicalising
@@ -97,8 +99,12 @@ src/polyscour/
 │   │                 how big a dropped directory could still be (adr/0008)
 │   ├── comparison.py Pure compare(). One-sided changes are BOUNDS; Refusal is
 │   │                 a value, never None. The volume figure needs no full scan
-│   └── history.py    Saved scans in storage_history.sqlite, NOT the ledger.
-│                     Closed SaveOutcome; unreadable rows are counted
+│   ├── history.py    Saved scans in storage_history.sqlite, NOT the ledger.
+│   │                 Closed SaveOutcome; unreadable rows are counted
+│   ├── review.py     After a scan: compare with the last, THEN save. Order
+│   │                 matters -- save-first makes a scan its own baseline
+│   └── report.py     The screen's sentences as data + the text export. One
+│                     place, so screen and export cannot word a caveat twice
 ├── startup/
 │   ├── manager.py    Read Run keys + the StartupApproved byte; TargetState
 │   ├── policy.py     veto() absolute; requires_elevation() a cost, not a

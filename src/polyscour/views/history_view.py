@@ -14,7 +14,7 @@ import customtkinter as ctk
 from polybedrock.ui import theme
 
 from polyscour.contracts import OperationOutcome
-from polyscour.views.dashboard_view import human
+from polyscour.formatting import human
 
 _OUTCOME_TEXT = {
     OperationOutcome.SUCCESS.value: ("Completed", "#7ec699"),

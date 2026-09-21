@@ -158,9 +158,16 @@ screen says so too, in one sentence, whenever anything is frozen.
 The only subsystem with no executor, and the only one that calls no guard.
 
 ```
-storage/volumes.py    which fixed volumes exist, and how full Windows says they are
+storage/volumes.py    which fixed volumes exist, how full Windows says they are, and
+                      which volume each one is (a GUID path, not a drive letter)
 storage/analyser.py   a budgeted, read-only, depth-first walk of exactly one of them
-views/storage_view.py three sorted lists and a residual panel; zero action controls
+storage/snapshots.py  a completed scan reduced to comparable form, and what it dropped
+storage/comparison.py two snapshots -> what changed, as bounds where it must be
+storage/history.py    the saved scans: their own SQLite file, not the ledger
+storage/review.py     after a scan: compare with the last one, THEN keep it
+storage/report.py     the screen's sentences as data, and the text export
+views/storage_view.py sorted lists, a residual panel and a history panel; no
+                      control that acts on a finding
 ```
 
 `cleaning/` is DISCOVER -> ANALYZE -> PLAN -> EXECUTE. This stops after ANALYZE
@@ -243,6 +250,50 @@ cannot add up.
 One volume per call. A single sweep over every disk gives worse progress, worse
 cancellation, and a residual that means nothing because it mixes several
 volumes' unreadable directories together.
+
+### History: what changed since the last scan
+
+`docs/adr/0008` has the reasoning. The flow, once per finished scan, all of it on
+the worker thread because building a snapshot visits every node of a tree that
+can reach two million:
+
+```
+analyse() -> VolumeReport
+   -> Snapshot.from_report          keep the largest directories, record the ceiling
+   -> store.history(volume_id)      the newest kept scan is the baseline
+   -> compare(baseline, snapshot)   BEFORE the save, or a scan is its own baseline
+   -> store.save(snapshot)          only if completed and the volume is identified
+   -> Review                        what the screen and the export both render
+```
+
+**Comparison is a pure function** of two snapshots — no disk, no clock — so it is
+tested by constructing the situations it must get right rather than by scanning
+a machine. Its result is a value: `Comparison | Refusal`, and inside a
+`Comparison` an `attribution` or a refusal, never neither. Windows' own
+used-space figure needs no scan to have finished, so it survives an incomplete
+one; *where* the space moved does not.
+
+**Retention is stored as a ceiling.** A snapshot keeps up to 500 directories of
+64 MiB and over, at any depth, and records how big an unlisted one could still
+be. A directory in only one of two snapshots is therefore a lower bound, and one
+whose bound is not positive is not shown at all. That single rule is what stops a
+retention cutoff from manufacturing growth.
+
+**The store is a separate file from the ledger** (`storage_history.sqlite`), is
+bounded to the newest 20 completed scans per volume, and reports rows it cannot
+read instead of skipping them. A store failure is captured in `Review.error` and
+shown — the one broad `except` in the package — because a scan that took two
+minutes must not be lost to the history beside it, and must never be reported as
+"nothing changed".
+
+**Sentences live in `storage/report.py`, not in the view.** The screen and the
+text export both render `HistorySummary`, so "at least", "these need not add up"
+and "not kept" cannot be worded differently in two places. That module and
+`formatting.py` sit under `storage/` and the package root rather than in
+`views/` so nothing in `storage/` imports a GUI module.
+
+The export (clipboard, or a file the person names) contains **folder and file
+names from this computer** and says so as its third line.
 
 ## The Startup Manager
 
