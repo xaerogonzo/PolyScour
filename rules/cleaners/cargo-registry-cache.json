@@ -1,0 +1,20 @@
+{
+  "id": "cargo-registry-cache",
+  "name": "Cargo downloaded crates",
+  "category": "Developer",
+  "risk": "safe",
+  "root_families": [
+    "cargo_registry_cache"
+  ],
+  "patterns": [
+    "*.crate"
+  ],
+  "conditions": [],
+  "min_age_days": 0,
+  "expected_scope": "one_directory",
+  "description": "The compressed .crate files Cargo downloaded from the registry. Cargo downloads again what a build needs, so the cost is bandwidth, and a build with no network will fail until they are back. Extracted sources (registry/src), installed tools (~/.cargo/bin), git checkouts and Cargo's settings are NOT touched: the extracted sources are deliberately left alone, because a half-removed crate directory breaks builds and does not recover. Only Cargo's default location is covered: a CARGO_HOME elsewhere is not followed.",
+  "limits": {
+    "max_candidates": 100000
+  },
+  "requires_elevation": false
+}

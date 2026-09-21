@@ -847,10 +847,11 @@ ever find.
 
 ## Developer-tool caches
 
-Added with the pip cache rule (`docs/adr/0009`). No new process, no new
-privilege — the section exists because these cleaners are the first whose
-*target location is something the target's own configuration can move*, which
-none of the earlier families could be.
+Added with the pip cache rule (`docs/adr/0009`) and extended with npm and Cargo
+(`docs/adr/0010`). No new process, no new privilege — the section exists because
+these cleaners are the first whose *target location is something the target's own
+configuration can move*, and the first whose target can be left **broken by a
+partial clean**, neither of which the earlier families could be.
 
 ### T25 — A tool's own configuration redirects a cleaner at something that matters
 
@@ -887,6 +888,37 @@ Residuals, stated:
   see `python -m pip` (ADR 0009). There is a millisecond window between pip
   finding a cached wheel and opening it; the worst case is one install failing and
   succeeding on retry.
+
+### T26 — A clean stops partway and leaves a tool's cache half-deleted
+
+**Mitigated by an eligibility rule, backed by measurement** (`docs/adr/0010`).
+The executor unlinks files one at a time and never a directory, so it can always
+be interrupted: the person cancels, a file is locked and skipped, the process is
+killed. For most caches a half-deleted state is harmless. For some it is not, and
+the tool does not recover:
+
+- **Cargo `registry/src`** — a surviving `.cargo-ok` marker beside deleted sources
+  is a build that fails ("couldn't read `lib.rs`") and stays failed. Measured.
+- **Gradle `caches`** — deleting only 10% of the files at random left it unable to
+  build in 2 of 6 trials, and none recovered. Measured.
+
+So a cache is eligible for a file-by-file rule only if **every** partial state is
+safe, and that is established by testing the tool on a throwaway copy — an
+exhaustive or seeded sweep — never by its documentation or by a `CACHEDIR.TAG`,
+which Cargo and Gradle both write and which says *disposable*, not *divisible*.
+npm's `_cacache` (every one of 15 subsets of a real cache's files settled into a
+working install or a clean miss), Cargo's `registry/cache` (independent `.crate`
+files) and pip's cache passed; the others were refused, and a test fails if a rule's
+root becomes, sits inside, or contains one of them.
+
+Residuals, stated:
+
+- **npm** — content deleted while its index entry survives gives one failed fetch,
+  after which npm invalidates the entry (its source, and the sweep, show it).
+- **An offline machine** needs its packages back after any of these rules run. The
+  rules' descriptions say so before anything is ticked.
+- **A new tool** is a new experiment. Nothing here generalises from one tool to
+  the next, and the checklist in `docs/CLEANING_RULES.md` asks for it.
 
 ## Non-goals
 

@@ -44,6 +44,8 @@ class RootFamily(enum.Enum):
     BROWSER_CACHE_FIREFOX = "browser_cache_firefox"
     CRASH_DUMPS = "crash_dumps"
     PIP_CACHE = "pip_cache"
+    NPM_CACHE = "npm_cache"
+    CARGO_REGISTRY_CACHE = "cargo_registry_cache"
 
 
 class Operation(enum.Enum):
@@ -139,6 +141,37 @@ def _resolve(family: RootFamily) -> list[Path]:
         # somebody else controls. A person with a redirected cache simply gets
         # nothing to scan here; the default location is still only ever pip's.
         return _env_dir("LOCALAPPDATA", "pip", "Cache")
+
+    if family is RootFamily.NPM_CACHE:
+        # npm's default cache, and only its content store, ``_cacache``.
+        #
+        # Two decisions, both from evidence (docs/adr/0009, adr/0010):
+        #
+        # * DEFAULT location only. ``NPM_CONFIG_CACHE``, ``--cache`` and a
+        #   ``cache=`` line in any ``.npmrc`` can all move it, and all are
+        #   configuration -- data somebody else controls. Not followed.
+        # * ``_cacache`` and NOT its parent. The parent also holds ``_npx``
+        #   (installed package trees that ``npx`` re-uses), which is not a
+        #   content-addressed store and whose partial deletion was not shown
+        #   safe; and ``_logs``. ``_cacache`` is what ``npm cache clean``
+        #   removes, and npm treats a missing entry as a cache miss.
+        return _env_dir("LOCALAPPDATA", "npm-cache", "_cacache")
+
+    if family is RootFamily.CARGO_REGISTRY_CACHE:
+        # Cargo's downloaded ``.crate`` archives, and NOT the registry around
+        # them.
+        #
+        # ``~/.cargo`` also holds ``bin`` (installed tools -- not a cache),
+        # ``git`` and ``config.toml``; and ``registry`` holds ``src`` (the
+        # extracted sources) and ``index``. Only ``registry/cache`` is safe to
+        # clean file by file. ``registry/src`` is not: each crate carries a
+        # ``.cargo-ok`` marker, and a build whose marker survives while its
+        # sources were deleted fails ("couldn't read ...") and does not
+        # recover -- measured, adr/0010. A cleaner that can be cancelled, or
+        # that skips a locked file, can leave exactly that behind.
+        #
+        # DEFAULT location only: ``CARGO_HOME`` is configuration.
+        return _env_dir("USERPROFILE", ".cargo", "registry", "cache")
 
     raise ValueError(f"no resolver for {family!r}")
 
@@ -267,6 +300,31 @@ POLICY: dict[str, PolicyEntry] = {
         operations=frozenset({_O.DELETE}),
         scope=Scope.ONE_DIRECTORY,
         max_candidates=200_000, max_bytes=32 * 1024**3, max_depth=8),
+
+    # npm's content store. DELETE: it regenerates -- npm re-fetches on a miss,
+    # and treats a missing entry as one (tested against every subset of a
+    # cache's files: at worst one fetch errors, then it heals).
+    #
+    # max_depth 8 against a measured layout of 4 (``content-v2/sha512/ab/cd/x``).
+    # No age floor, no condition: see adr/0009 (a name-based "npm is running"
+    # check would have to guess) and adr/0010 (partial deletion is safe here).
+    "npm-cache": PolicyEntry(
+        families=frozenset({_C.NPM_CACHE}),
+        operations=frozenset({_O.DELETE}),
+        scope=Scope.ONE_DIRECTORY,
+        max_candidates=200_000, max_bytes=32 * 1024**3, max_depth=8),
+
+    # Cargo's downloaded .crate archives. Independent files, so partial
+    # deletion is safe; cargo re-downloads what a build needs (and fails only
+    # if it is OFFLINE, which the rule's description says). Measured layout:
+    # ``<index>/<crate>.crate``, depth 1, so the ceiling is generous at 4.
+    #
+    # Deliberately NOT ``registry/src`` -- see the resolver and adr/0010.
+    "cargo-registry-cache": PolicyEntry(
+        families=frozenset({_C.CARGO_REGISTRY_CACHE}),
+        operations=frozenset({_O.DELETE}),
+        scope=Scope.ONE_DIRECTORY,
+        max_candidates=100_000, max_bytes=16 * 1024**3, max_depth=4),
 }
 
 
