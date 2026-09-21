@@ -43,6 +43,12 @@ from polyscour.storage.volumes import Volume, usage_now
 _COMPRESSED = getattr(stat, "FILE_ATTRIBUTE_COMPRESSED", 0x800)
 _SPARSE = getattr(stat, "FILE_ATTRIBUTE_SPARSE_FILE", 0x200)
 
+#: How many of the largest files a finished report keeps. Named because a saved
+#: snapshot's honesty depends on it: a file missing from a list this long can be
+#: no larger than the smallest one on it, and ``storage/snapshots.py`` derives
+#: that bound from this number rather than from a second copy. adr/0008.
+LARGEST_FILES_KEPT = 100
+
 
 class StopReason(enum.Enum):
     """Why a scan ended. An enum rather than ``complete: bool``.
@@ -427,6 +433,6 @@ def analyse(request: StorageScanRequest,
         report.residual[ResidualReason.TIME_EXHAUSTED] = report.residual_bytes
 
     report.largest_files.sort(key=lambda f: f.allocated_bytes, reverse=True)
-    del report.largest_files[100:]
+    del report.largest_files[LARGEST_FILES_KEPT:]
 
     return report

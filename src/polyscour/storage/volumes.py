@@ -29,6 +29,12 @@ class Volume:
     total_bytes: int
     used_bytes: int
     free_bytes: int
+    #: Windows' own identity for the volume, ``\\?\Volume{GUID}\``, or ``None``
+    #: when it could not be read. It follows the volume across a drive-letter
+    #: change, which ``root`` does not, and ``None`` means *unknown* -- never
+    #: "the same as another unknown". A history keyed on the drive letter would
+    #: compare a swapped disk against the old one. adr/0008.
+    volume_id: str | None = None
 
     @property
     def label(self) -> str:
@@ -53,6 +59,34 @@ def _usage(root: Path) -> tuple[int, int, int] | None:
     except OSError:
         return None
     return usage.total, usage.used, usage.free
+
+
+def _volume_id(root: Path) -> str | None:
+    r"""The volume GUID path for a mount point, or None.
+
+    ``GetVolumeNameForVolumeMountPointW`` needs no elevation and reads no
+    contents. It fails -- rather than guessing -- for a path that is not a mount
+    point, which is why callers pass the volume root.
+
+    Not the volume *serial number*: that is chosen at format time and copied by
+    disk cloning, so it can call two disks one. adr/0008.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        fn = ctypes.windll.kernel32.GetVolumeNameForVolumeMountPointW
+        fn.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        fn.restype = wintypes.BOOL
+        buf = ctypes.create_unicode_buffer(64)
+        mount = str(root)
+        if not mount.endswith("\\"):
+            mount += "\\"
+        if not fn(mount, buf, len(buf)):
+            return None
+        return buf.value or None
+    except (OSError, AttributeError, ValueError):
+        return None
 
 
 def fixed_volumes() -> list[Volume]:
@@ -87,7 +121,8 @@ def fixed_volumes() -> list[Volume]:
             continue
         total, used, free = measured
         out.append(Volume(root=root, fstype=part.fstype,
-                          total_bytes=total, used_bytes=used, free_bytes=free))
+                          total_bytes=total, used_bytes=used, free_bytes=free,
+                          volume_id=_volume_id(root)))
 
     return sorted(out, key=lambda v: v.label.lower())
 
