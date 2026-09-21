@@ -29,6 +29,7 @@ platforms rather than pretending to pass.
 | PolyShield tile | PolyShield installed and running | The tile does not render at all |
 | Storage analyser | `psutil` for volume enumeration | No volumes are listed, and the screen says so rather than showing an empty tree |
 | Storage: on-disk sizes | `kernel32.GetCompressedFileSizeW` | Falls back to logical size, labelled as which — a worse answer, not a wrong one |
+| Storage: comparing scans over time | `kernel32.GetVolumeNameForVolumeMountPointW`, for a volume identity that survives a drive-letter change | The volume has no identity: its scans are **not saved** and never compared, and the screen says why. Falling back to the drive letter would compare a swapped disk against the old one (adr/0008) |
 | Storage: complete totals | Administrator | **Not offered.** Unreadable directories are counted and named; the residual grows and says why. Elevation is not requested to shrink a number |
 
 ## Capabilities declared today

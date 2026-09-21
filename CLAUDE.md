@@ -89,9 +89,16 @@ src/polyscour/
 │                     Silence timeout + cancel sentinel, not a fixed deadline
 ├── storage/
 │   ├── volumes.py    Fixed volumes + capacity. psutil for what is mounted,
-│   │                 shutil.disk_usage for how full
-│   └── analyser.py   Budgeted read-only walk. Calls NO guard (adr/0007), and
-│                     the residual is a first-class number
+│   │                 shutil.disk_usage for how full, and volume_id (the GUID
+│   │                 path; None = unknown, never "same as another unknown")
+│   ├── analyser.py   Budgeted read-only walk. Calls NO guard (adr/0007), and
+│   │                 the residual is a first-class number
+│   ├── snapshots.py  A completed scan reduced to comparable form, recording
+│   │                 how big a dropped directory could still be (adr/0008)
+│   ├── comparison.py Pure compare(). One-sided changes are BOUNDS; Refusal is
+│   │                 a value, never None. The volume figure needs no full scan
+│   └── history.py    Saved scans in storage_history.sqlite, NOT the ledger.
+│                     Closed SaveOutcome; unreadable rows are counted
 ├── startup/
 │   ├── manager.py    Read Run keys + the StartupApproved byte; TargetState
 │   ├── policy.py     veto() absolute; requires_elevation() a cost, not a

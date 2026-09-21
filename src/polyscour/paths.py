@@ -63,6 +63,15 @@ def ledger_path() -> Path:
     return app_root() / "history.sqlite"
 
 
+def storage_history_path() -> Path:
+    """Saved Storage scans, so a later scan can be compared with an earlier one.
+
+    Its own file and not the ledger: the ledger records what PolyScour did to
+    this machine, and a scan did nothing. adr/0008.
+    """
+    return app_root() / "storage_history.sqlite"
+
+
 def resource_root() -> Path:
     r"""Where files that *ship with the program* live. Read-only, disposable.
 
