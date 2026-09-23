@@ -100,12 +100,10 @@ answer that arrives after the list was rebuilt is dropped.
 - Per-user COM class registrations are not consulted, so such a task stays
   listed with "no registered server found" rather than being hidden.
 - **Found while doing this, and deliberately not fixed here:** Windows keeps the
-  approval byte for `HKLM\...\WOW6432Node\...\Run` values under
-  `StartupApproved\Run32`, while `startup/manager.py` reads (and would write)
-  `StartupApproved\Run` for them. Observed on this machine: the one 32-bit
-  entry has its record under `Run32`, so a 32-bit entry disabled in Task Manager
-  would show as enabled here. That is a defect in the *writing* half of the
-  Startup Manager, so it is a separate change with its own tests, not folded into
-  a read-only one. The byte values seen in `Run` (`02`, `03`, `04`, `06`) also
-  go beyond the two the reader distinguishes; what `04` and `06` mean has not
-  been established here.
+  approval byte for the 32-bit machine-wide `Run` key (`...\WOW6432Node\...\Run`)
+  under `StartupApproved\Run32`, while `startup/manager.py` read `StartupApproved\Run`
+  for them, so a 32-bit entry disabled in Task Manager showed as enabled. Changing
+  one was refused by the helper ("not a machine-wide startup entry"), or wrote the
+  wrong record if a same-named value existed in both views. That is the *writing*
+  half of the Startup Manager, so it is a separate change with its own tests
+  and threat-model entry (PR #27), not folded into a read-only one.
