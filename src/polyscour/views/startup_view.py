@@ -82,6 +82,10 @@ class StartupView(ctk.CTkFrame):
         self.list.grid(row=3, column=0, sticky="nsew", padx=20, pady=(0, 4))
         self.list.grid_columnconfigure(0, weight=1)
         self._generation = 0
+        #: Identities whose administrator request is still in flight, and the
+        #: switch drawn for each row, so a row can be locked and unlocked.
+        self._pending: set[str] = set()
+        self._switches: dict = {}
 
     def on_show(self) -> None:
         self.refresh()
@@ -89,6 +93,7 @@ class StartupView(ctk.CTkFrame):
     def refresh(self) -> None:
         for child in self.list.winfo_children():
             child.destroy()
+        self._switches = {}
 
         try:
             items = list_items()
@@ -207,9 +212,11 @@ class StartupView(ctk.CTkFrame):
         var = ctk.BooleanVar(value=it.enabled)
         switch = ctk.CTkSwitch(
             row, text="", width=40, variable=var,
-            state="disabled" if refusal else "normal",
+            state="disabled" if refusal or it.identity in self._pending
+            else "normal",
             command=lambda i=it, v=var: self._toggle(i, v))
         switch.grid(row=0, column=0, rowspan=2, padx=(0, 8))
+        self._switches[it.identity] = switch
 
         ctk.CTkLabel(row, text=it.name, anchor="w", font=theme.get("body"),
                      text_color=theme.color("subtext") if refusal
@@ -237,37 +244,56 @@ class StartupView(ctk.CTkFrame):
                      ).grid(row=0, column=2, rowspan=2, padx=6)
 
     def _toggle(self, it, var) -> None:
+        if it.identity in self._pending:
+            # A second click on a row whose request is still in flight. Judged
+            # against the row's *old* state it would read as "already in that
+            # state" and snap the switch back to a position the registry does
+            # not have -- which is what happened on a real machine. Ignored,
+            # and the switch put back where the pending request left it.
+            var.set(it.enabled)
+            return
+
         wanted = bool(var.get())
         ledger = self.app.services.ledger
 
         if requires_elevation(it) is None:
-            self._toggled(it, var, wanted,
+            self._toggled(it, wanted,
                           service.apply_change(it, wanted, ledger), None)
             return
 
         # A machine-wide change raises a UAC prompt, and the prompt is modal to
         # the desktop rather than to us: doing it inline freezes the window
         # behind the dialog and Windows paints it as "not responding". The
-        # switch is left where the user put it and disabled until the answer
-        # arrives, so the screen never shows a state nobody has agreed to yet.
+        # switch is left where the user put it and *locked* until the answer
+        # arrives, so the screen never shows a state nobody has agreed to yet
+        # and a second click cannot race the first.
+        self._pending.add(it.identity)
+        self._lock(it.identity, True)
         self.status.configure(
             text=f"{it.name}: waiting for administrator rights…")
         self.app.run_off_thread(
             lambda: service.apply_change(it, wanted, ledger),
-            lambda result, error: self._toggled(it, var, wanted, result, error))
+            lambda result, error: self._toggled(it, wanted, result, error))
 
-    def _toggled(self, it, var, wanted, result, error) -> None:
+    def _lock(self, identity: str, locked: bool) -> None:
+        switch = self._switches.get(identity)
+        if switch is not None:
+            switch.configure(state="disabled" if locked else "normal")
+
+    def _toggled(self, it, wanted, result, error) -> None:
+        self._pending.discard(it.identity)
+        # Whatever happened, the list is re-read from the registry rather than
+        # patched from what this row remembered. A refusal does not mean the
+        # switch is where it started (an earlier request may have landed), and
+        # leaving a row showing a state the registry does not have would be the
+        # screen lying about the machine.
+        self.refresh()
         if error is not None:
-            var.set(it.enabled)
             self.status.configure(text=f"{it.name}: {error}")
             return
         if not result.changed:
-            # Put the switch back where it was: leaving it showing a state the
-            # registry does not have would be the screen lying about the machine.
-            var.set(it.enabled)
             self.status.configure(text=f"{it.name}: {result.reason}")
             return
-        self.refresh()
         # Says which mechanism was used, because "PolyScour changed something
         # for every account on this machine" is a different sentence from
         # "PolyScour changed something for you", and the user should read the
