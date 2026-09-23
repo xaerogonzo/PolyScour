@@ -219,6 +219,25 @@ an installer can rewrite the `Run` value. Re-enabling it then would restore a
 decision nobody made, with PolyScour's name on it — so the `raw_value` recorded
 at change time is compared, and a mismatch refuses rather than writes.
 
+**The 32-bit machine-wide key is a second mechanism, and is named as one.**
+Windows keeps the record for `HKLM\SOFTWARE\WOW6432Node\...\Run` values in
+`HKLM\...\Explorer\StartupApproved\Run32`, not `...\Run`. Before this was fixed
+the Startup screen read `Run` for those entries and so showed every one as
+enabled, including one switched off in Task Manager (measured on a real
+machine: the one 32-bit entry's record is in `Run32`, absent from `Run`); and
+the helper knew only the 64-bit key, so a change to such an entry was refused as
+"not a machine-wide startup entry" — or, if a same-named value existed in both
+views, wrote the wrong record.
+
+The helper now takes a `wow6432` boolean. It **chooses between exactly two
+compiled-in pairs** and can name no key. It passes the "may narrow, never
+widen" test the way `expected_raw_value` does: the value must already exist in
+the Run key *of the chosen view*, and its data must match what the GUI saw, or
+nothing is written — a same-named value in the other view licenses nothing. The
+read-back looks in the same view it wrote. Net change to what the elevated
+process can write: one additional approval key, `StartupApproved\Run32`, and
+only for a value that already exists in the 32-bit `Run` key.
+
 ### T14 — The Startup Manager is used to make a machine less safe
 
 **Less mitigated than it was, and this section says so rather than being
@@ -303,7 +322,7 @@ closed set of named operations with structured parameters:
 |---|---|---|
 | `DeleteApprovedPath` | `rule_id`, `path` | `windows-temp` is skipped without it |
 | `DeleteApprovedPathsForRule` | `rule_id`, `exclusions` | per-file elevation is several hundred prompts — T19 |
-| `SetMachineStartupApproval` | `value_name`, `enabled`, `expected_raw_value` | HKLM startup entries are refused without it |
+| `SetMachineStartupApproval` | `value_name`, `enabled`, `expected_raw_value`, `wow6432` | HKLM startup entries are refused without it. `wow6432` chooses between **two fixed** (Run key, approval key) pairs — see T13 |
 
 Note what the second row does *not* take. It is the only operation here that
 cannot be told which file to act on, and that is the point of it.
