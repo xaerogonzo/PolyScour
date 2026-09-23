@@ -55,6 +55,19 @@ from polyscour.safety.policy import PolicyViolation, entry_for, permitted_roots
 _MACHINE_APPROVED = (
     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run")
 
+#: The machine-wide Run key and its approval key, for the 64-bit view and for
+#: the 32-bit one. **A closed table of two fixed pairs**: the request's
+#: ``wow6432`` boolean chooses between them and can name nothing else, so the
+#: set of keys this operation can ever write is exactly these two approval
+#: keys. Windows keeps the record for a 32-bit ``Run`` value under ``Run32``,
+#: not ``Run`` -- writing ``Run`` for one is a no-op that reads back as success.
+_MACHINE_KEYS = {
+    False: (r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", _MACHINE_APPROVED),
+    True: (r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
+           r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer"
+           r"\StartupApproved\Run32"),
+}
+
 #: How many individually-named skips a response carries before it starts
 #: summarising. A response is read by a human through the UI, and a rule that
 #: refuses two hundred thousand files does not become clearer by listing them.
@@ -363,11 +376,13 @@ def _set_machine_startup_approval(params: dict) -> Response:
     value_name = params["value_name"]
     enabled = params["enabled"]
     expected_raw_value = params["expected_raw_value"]
+    wow6432 = params["wow6432"]
+    run_key, approved_key = _MACHINE_KEYS[wow6432]
 
     # 1. The mechanism must exist. This is what bounds the operation: a name
-    #    with no machine-wide Run value is not a startup entry, whatever the
-    #    caller called it.
-    run_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+    #    with no machine-wide Run value *in the view the caller named* is not a
+    #    startup entry, whatever the caller called it. A 64-bit value of the
+    #    same name does not license a write to the 32-bit record, or back.
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, run_key) as key:
             current_raw, _ = winreg.QueryValueEx(key, value_name)
@@ -399,7 +414,7 @@ def _set_machine_startup_approval(params: dict) -> Response:
             "policy")
 
     try:
-        with winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, _MACHINE_APPROVED) as key:
+        with winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, approved_key) as key:
             winreg.SetValueEx(key, value_name, 0, winreg.REG_BINARY,
                               _approval_blob(enabled))
     except OSError as exc:
@@ -411,7 +426,7 @@ def _set_machine_startup_approval(params: dict) -> Response:
     #    virtualisation, policy and a racing writer can all intervene -- and
     #    "verify, do not assume" is what the rest of this product already does
     #    when it re-scans after a clean.
-    observed = _read_machine_approval(value_name)
+    observed = _read_machine_approval(value_name, wow6432)
     if observed is None:
         return Response(False,
                         "the value could not be read back after writing, so "
@@ -425,8 +440,10 @@ def _set_machine_startup_approval(params: dict) -> Response:
                     data={"value_name": value_name, "enabled": enabled})
 
 
-def _read_machine_approval(value_name: str) -> bool | None:
+def _read_machine_approval(value_name: str, wow6432: bool = False) -> bool | None:
     """The current approval state of one HKLM entry, or None if unreadable.
+
+    Reads the approval key of the *same view* the write used.
 
     Absent means enabled: Windows treats a missing approval record as "not
     disabled", and so must anything reading it back.
@@ -434,7 +451,8 @@ def _read_machine_approval(value_name: str) -> bool | None:
     from polyscour.startup.manager import _DISABLED_BYTE
 
     try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _MACHINE_APPROVED) as key:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            _MACHINE_KEYS[wow6432][1]) as key:
             blob, _ = winreg.QueryValueEx(key, value_name)
     except FileNotFoundError:
         return True

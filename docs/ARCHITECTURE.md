@@ -557,6 +557,13 @@ against what the entry launches now, writes, and **reads back** — because
 `SetValueEx` returning without error is not evidence the value is what was
 asked for.
 
+Which approval key governs an entry is decided by `manager.approval_key(hive)`:
+`StartupApproved\Run` for `HKCU` and `HKLM`, and `StartupApproved\Run32` for the
+32-bit machine-wide key (`HKLM_WOW6432`). The elevated request carries the same
+fact as a `wow6432` boolean derived from the entry, and the helper maps it onto
+one of two compiled-in (Run, approval) pairs — the caller cannot name a key
+(T13).
+
 `startup_view` runs an elevated toggle through `run_off_thread`. The UAC prompt
 is modal to the desktop rather than to us, so doing it inline freezes the window
 behind the dialog and Windows paints it as "not responding".

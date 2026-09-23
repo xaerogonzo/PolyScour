@@ -70,7 +70,8 @@ def test_a_wrongly_typed_parameter_is_refused_rather_than_coerced():
         Request.from_json(json.dumps({
             "operation": "set_machine_startup_approval",
             "params": {"value_name": "Thing", "enabled": 1,
-                       "expected_raw_value": r"C:\Thing\thing.exe"}}))
+                       "expected_raw_value": r"C:\Thing\thing.exe",
+                       "wow6432": False}}))
 
 
 def test_an_empty_string_parameter_is_refused():
@@ -185,7 +186,7 @@ def test_a_startup_name_with_no_machine_entry_is_refused():
     response = helper.handle(req(
         operation=Operation.SET_MACHINE_STARTUP_APPROVAL,
         value_name="NoSuchEntryPolyScourTest", enabled=False,
-        expected_raw_value=r"C:\nowhere\nothing.exe"))
+        expected_raw_value=r"C:\nowhere\nothing.exe", wow6432=False))
 
     assert response.ok is False
     assert response.refused_by == "policy"

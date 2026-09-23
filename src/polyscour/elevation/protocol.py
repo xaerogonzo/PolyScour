@@ -65,9 +65,15 @@ _PARAMS: dict[Operation, dict[str, type]] = {
     Operation.DELETE_APPROVED_PATH: {"rule_id": str, "path": str},
     Operation.DELETE_APPROVED_PATHS_FOR_RULE: {"rule_id": str,
                                                "exclusions": list},
+    #: ``wow6432`` picks between exactly two fixed (Run key, approval key)
+    #: pairs inside the helper -- the 64-bit and the 32-bit machine-wide ones.
+    #: It cannot name a key. It passes the "may narrow, never widen" test the
+    #: way ``expected_raw_value`` does: the value must already exist in the Run
+    #: key of the pair chosen, and its data must match, or nothing is written.
     Operation.SET_MACHINE_STARTUP_APPROVAL: {"value_name": str,
                                              "enabled": bool,
-                                             "expected_raw_value": str},
+                                             "expected_raw_value": str,
+                                             "wow6432": bool},
 }
 
 #: The one place a string parameter may legitimately be empty. Named as a pair
