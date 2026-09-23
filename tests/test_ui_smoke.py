@@ -519,3 +519,114 @@ def test_open_storage_navigates_and_does_nothing_else(clean_screen, app, monkeyp
                  if isinstance(w, ctk.CTkButton)]
     button.invoke()
     assert seen == ["storage"]
+
+
+# ── Startup: the view-only inventory ─────────────────────────────────────────
+
+def _inventory_fixture():
+    from polyscour.startup.inventory import (Inventory, InventoryEntry, Source,
+                                             SourceStatus)
+    from polyscour.startup.manager import TargetState
+
+    def e(source, name, state="enabled"):
+        return InventoryEntry(source, name, f"mechanism of {name}",
+                              rf"C:\Vendor\{name}.exe", rf"C:\Vendor\{name}.exe",
+                              TargetState.PRESENT, "SYSTEM", state)
+
+    return Inventory(
+        entries=[e(Source.SCHEDULED_TASK, "Updater"), e(Source.SERVICE, "Agent")],
+        statuses=[SourceStatus(Source.STARTUP_FOLDER),
+                  SourceStatus(Source.RUN_ONCE, error="access denied"),
+                  SourceStatus(Source.SCHEDULED_TASK, listed=1,
+                               in_windows_folder=42),
+                  SourceStatus(Source.SERVICE, listed=1, in_windows_folder=83)])
+
+
+@pytest.fixture
+def startup_screen(app, monkeypatch):
+    from polyscour.views import startup_view
+
+    view = app.get_view("startup")
+    monkeypatch.setattr(startup_view, "list_items", lambda: [])
+    monkeypatch.setattr(startup_view, "read_inventory", _inventory_fixture)
+
+    def inline(work, done):
+        try:
+            result = work()
+        except Exception as exc:                            # noqa: BLE001
+            done(None, exc)
+        else:
+            done(result, None)
+
+    monkeypatch.setattr(app, "run_off_thread", inline)
+    return view
+
+
+def _texts(view):
+    def walk(w):
+        yield w
+        for c in w.winfo_children():
+            yield from walk(c)
+    return [w.cget("text") for w in walk(view.list)
+            if isinstance(w, ctk.CTkLabel)]
+
+
+def test_the_inventory_names_its_sources_and_what_it_left_out(startup_screen):
+    startup_screen.refresh()
+    text = "\n".join(_texts(startup_screen))
+    assert "Also starts with Windows — view only" in text
+    assert "Updater" in text and "Agent" in text
+    # Counted, not silently absent.
+    assert "42 others, whose programs are all inside the Windows folder, are not listed" in text
+    assert "83 others, whose programs are all inside the Windows folder, are not listed" in text
+
+
+def test_an_unread_source_says_so_and_is_not_shown_as_none_found(startup_screen):
+    startup_screen.refresh()
+    text = "\n".join(_texts(startup_screen))
+    assert "Could not read all of this: access denied" in text
+    # The source that WAS read and is empty says so; the unread one must not.
+    assert text.count("None found.") == 1
+
+
+def test_the_inventory_has_no_switch_and_no_advice(startup_screen):
+    startup_screen.refresh()
+    def walk(w):
+        yield w
+        for c in w.winfo_children():
+            yield from walk(c)
+    kinds = {type(w).__name__ for w in walk(startup_screen.list)}
+    assert "CTkSwitch" not in kinds and "CTkButton" not in kinds
+    text = "\n".join(_texts(startup_screen)).lower()
+    for word in ("recommend", "safe to", "should disable", "unnecessary", "bloat"):
+        # The one sentence that names the word does so to disclaim it.
+        assert word not in text.replace("nothing below is a recommendation", "")
+
+
+def test_a_failed_inventory_read_is_reported_not_left_as_loading(startup_screen,
+                                                                 monkeypatch):
+    from polyscour.views import startup_view
+
+    def boom():
+        raise RuntimeError("no luck")
+    monkeypatch.setattr(startup_view, "read_inventory", boom)
+    startup_screen.refresh()
+    text = "\n".join(_texts(startup_screen))
+    assert "Could not read these: no luck" in text
+    assert "Reading scheduled tasks" not in text
+
+
+def test_a_late_answer_for_a_rebuilt_list_is_dropped(startup_screen, app, monkeypatch):
+    """Refreshing twice while the first read is in flight must not paint the
+    section twice."""
+    pending = []
+    monkeypatch.setattr(app, "run_off_thread",
+                        lambda work, done: pending.append((work, done)))
+    startup_screen.refresh()
+    startup_screen.refresh()
+    assert len(pending) == 2
+    for work, done in pending:              # the stale one answers first
+        done(work(), None)
+    text = _texts(startup_screen)
+    assert text.count("Also starts with Windows — view only") == 1
+    assert sum("Updater" == t for t in text) == 1

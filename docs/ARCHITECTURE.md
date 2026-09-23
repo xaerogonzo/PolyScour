@@ -339,6 +339,33 @@ Absence of an approval record means **enabled** — that is Windows' default, an
 most entries never get a record. Orphan records (an approval naming a `Run`
 value that no longer exists) are excluded: they are not startup items, and
 listing them would offer a switch that governs nothing.
+
+### The view-only inventory (ADR 0011)
+
+`startup/inventory.py` lists the rest of what starts with Windows — Startup
+folders, `RunOnce` keys, scheduled tasks with a logon or boot trigger, and
+automatic Win32 services — and has **no writer and no switch**. It is a peer of
+`manager.py`, not part of the chain above: it imports only `TargetState` from
+it, and nothing in `policy`/`service` knows it exists.
+
+```
+read_inventory()  ->  one reader per source, each returning (entries, status)
+   folders   os.listdir + StartupApproved\StartupFolder byte
+   RunOnce   winreg
+   tasks     schtasks.exe /query /xml ONE  (absolute path, shell=False)
+   services  HKLM\SYSTEM\CurrentControlSet\Services (+ Parameters\ServiceDll)
+```
+
+Threading: `startup_view` calls it through `app.run_off_thread`, because one
+source is a subprocess. A generation counter drops an answer that arrives after
+the list was rebuilt. Each source carries its own `SourceStatus`, so a failure
+marks only that source *unread* — which the screen words differently from
+*none found* — and never blanks the others.
+
+Tasks and services whose programs all live inside the Windows folder are
+counted, not listed (a location, not a verdict; ADR 0011 Decision 3). Anything
+unreadable stays in the list.
+
 ## Two lifetimes: resource and data
 
     RESOURCE   ships with the build, read-only, may sit in a temporary
