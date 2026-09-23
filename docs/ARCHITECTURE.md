@@ -594,6 +594,13 @@ one of two compiled-in (Run, approval) pairs — the caller cannot name a key
 `startup_view` runs an elevated toggle through `run_off_thread`. The UAC prompt
 is modal to the desktop rather than to us, so doing it inline freezes the window
 behind the dialog and Windows paints it as "not responding".
+
+While a request is in flight its row's switch is **locked** and its identity is
+held in a pending set, so a second click cannot race the first (on a real
+machine it did: judged against the row's old state it read "already in that
+state" and snapped the switch to a position the registry did not have). When
+the answer arrives — success, refusal or error alike — the list is **re-read
+from the registry** rather than patched from what the row remembered.
 ## Threading
 
 Tk is not thread-safe. One rule covers it:
