@@ -30,6 +30,8 @@ platforms rather than pretending to pass.
 | Storage analyser | `psutil` for volume enumeration | No volumes are listed, and the screen says so rather than showing an empty tree |
 | Storage: on-disk sizes | `kernel32.GetCompressedFileSizeW` | Falls back to logical size, labelled as which — a worse answer, not a wrong one |
 | Storage: comparing scans over time | `kernel32.GetVolumeNameForVolumeMountPointW`, for a volume identity that survives a drive-letter change | The volume has no identity: its scans are **not saved** and never compared, and the screen says why. Falling back to the drive letter would compare a swapped disk against the old one (adr/0008) |
+| Startup: view-only list of tasks | `%SystemRoot%\System32\schtasks.exe` | The section says the tasks **could not be read** — not "none found". `System32\Tasks` and the registry `TaskCache` are administrator-only, so `schtasks` is the only unelevated source (adr/0011) |
+| Startup: view-only list of services, folders, `RunOnce` | Nothing beyond the registry and the filesystem | Each source reports its own failure in its own section |
 | Storage: complete totals | Administrator | **Not offered.** Unreadable directories are counted and named; the residual grows and says why. Elevation is not requested to shrink a number |
 
 ## Capabilities declared today

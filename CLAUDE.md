@@ -109,7 +109,9 @@ src/polyscour/
 │   ├── manager.py    Read Run keys + the StartupApproved byte; TargetState
 │   ├── policy.py     veto() absolute; requires_elevation() a cost, not a
 │   │                 refusal — THE AUTHORITY for autoruns
-│   └── service.py    veto -> ledger -> registry (or helper), and the undo
+│   ├── service.py    veto -> ledger -> registry (or helper), and the undo
+│   └── inventory.py  READ-ONLY: folders, RunOnce, logon/boot tasks, services.
+│                     No writer, no switch (adr/0011). Unread != none found
 └── views/            dashboard, clean, storage, gamemode, startup, history,
                       settings
 rules/cleaners/*.json  Data only. Never executable, never authority.

@@ -316,14 +316,86 @@ def startup(session):
            "HKLM", "machine", True, TargetState.PRESENT),
     ]
 
-    real = startup_view.list_items
+    real, real_inventory = startup_view.list_items, startup_view.read_inventory
     startup_view.list_items = lambda: list(fixed)
+    startup_view.read_inventory = _startup_inventory_fixture
     try:
         view = session.mount(startup_view.StartupView, app=_app())
         view.refresh()
         session.shot("startup_entries")
     finally:
         startup_view.list_items = real
+        startup_view.read_inventory = real_inventory
+
+
+def _startup_inventory_fixture():
+    """Constructed, for the same reason as the list above: the real one is this
+    machine's scheduled tasks and services.
+
+    Covers what the section exists to say: a task and a service outside the
+    Windows folder, a target that is gone, a source that could not be read (so
+    the screen shows *unread* rather than *none*), a source that was read and
+    is empty, and the count of what the location filter left out.
+    """
+    from polyscour.startup.inventory import (Inventory, InventoryEntry, Source,
+                                             SourceStatus)
+    from polyscour.startup.manager import TargetState
+
+    def e(source, name, mechanism, launches, target, state, runs_as):
+        path = launches.split('"')[1] if launches.startswith('"') else launches
+        return InventoryEntry(source, name, mechanism, launches, path, target,
+                              runs_as, state)
+
+    present, missing = TargetState.PRESENT, TargetState.MISSING
+    return Inventory(
+        entries=[
+            e(Source.STARTUP_FOLDER, "Sync Client.lnk",
+              r"C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup",
+              r"C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\Sync Client.lnk",
+              present, "enabled", "you"),
+            e(Source.SCHEDULED_TASK, "VendorUpdater",
+              r"Task Scheduler \Vendor\VendorUpdater, at logon",
+              r"C:\Program Files\Vendor\updater.exe", present, "enabled", "Users group"),
+            e(Source.SCHEDULED_TASK, "OldHelper",
+              r"Task Scheduler \OldHelper, at boot",
+              r"C:\Vendor\gone\helper.exe", missing, "task disabled", "SYSTEM"),
+            e(Source.SERVICE, "Vendor Agent",
+              r"HKLM\SYSTEM\CurrentControlSet\Services\VendorAgent",
+              r'"C:\Program Files\Vendor\agent.exe" --service', present,
+              "automatic (delayed start)", "LocalSystem"),
+        ],
+        statuses=[
+            SourceStatus(Source.STARTUP_FOLDER, listed=1),
+            SourceStatus(Source.RUN_ONCE, error="Access is denied"),
+            SourceStatus(Source.SCHEDULED_TASK, listed=2, in_windows_folder=42),
+            SourceStatus(Source.SERVICE, listed=1, in_windows_folder=83),
+        ])
+
+
+@scene("startup-inventory")
+def startup_inventory(session):
+    """The view-only section at the top of the screen, where a golden can see it."""
+    from polybedrock.startup import RunEntry
+
+    from polyscour.startup.manager import StartupItem, TargetState
+    from polyscour.views import startup_view
+
+    only = StartupItem(
+        entry=RunEntry(hive_name="HKCU",
+                       key_path=r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+                       value_name="OneDrive", raw_value=r"C:\OneDrive.exe",
+                       target_path=r"C:\OneDrive.exe", scope="user"),
+        enabled=True, has_approval_record=True, target=TargetState.PRESENT)
+    real, real_inventory = startup_view.list_items, startup_view.read_inventory
+    startup_view.list_items = lambda: [only]
+    startup_view.read_inventory = _startup_inventory_fixture
+    try:
+        view = session.mount(startup_view.StartupView, app=_app())
+        view.refresh()
+        session.shot("startup_inventory")
+    finally:
+        startup_view.list_items = real
+        startup_view.read_inventory = real_inventory
 
 
 def _storage_fixture():

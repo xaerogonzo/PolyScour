@@ -29,10 +29,19 @@ import customtkinter as ctk
 from polybedrock.ui import theme
 
 from polyscour.startup import service
+from polyscour.startup.inventory import Source, describe, read_inventory
 from polyscour.startup.manager import list_items
 from polyscour.startup.policy import (describe_target,
                                       requires_elevation, veto)
 
+#: Section titles, and the exact mechanism each one reads. Naming the mechanism
+#: is a project rule; "some Windows startup thing" is not an acceptable label.
+_SECTIONS = [
+    (Source.STARTUP_FOLDER, "Startup folders"),
+    (Source.RUN_ONCE, "RunOnce keys"),
+    (Source.SCHEDULED_TASK, "Scheduled tasks that start at logon or boot"),
+    (Source.SERVICE, "Services set to start automatically"),
+]
 
 
 class StartupView(ctk.CTkFrame):
@@ -72,6 +81,7 @@ class StartupView(ctk.CTkFrame):
         self.list = ctk.CTkScrollableFrame(self, fg_color=theme.color("card2"))
         self.list.grid(row=3, column=0, sticky="nsew", padx=20, pady=(0, 4))
         self.list.grid_columnconfigure(0, weight=1)
+        self._generation = 0
 
     def on_show(self) -> None:
         self.refresh()
@@ -86,16 +96,106 @@ class StartupView(ctk.CTkFrame):
             # Not an empty list: "nothing starts up" is a claim, and a failed
             # read is not evidence for it.
             self.status.configure(text=f"Could not read the startup entries: {exc}")
+            items = None
+
+        if items is not None:
+            for it in items:
+                self._render_row(it)
+
+            on = sum(1 for i in items if i.enabled)
+            self.status.configure(
+                text=f"{len(items)} entries, {on} enabled. "
+                     f"Machine-wide entries affect every account and ask for "
+                     f"administrator rights when you change one.")
+        self._load_inventory()
+
+    # ── the view-only inventory ──────────────────────────────────────────────
+
+    def _load_inventory(self) -> None:
+        """Read tasks and services off the UI thread; render when they arrive.
+
+        ``schtasks`` is a subprocess, and a screen that freezes while one runs
+        is the wrong trade for a section that changes nothing. The generation
+        counter drops an answer that arrives after the list was rebuilt --
+        painting it would duplicate the section.
+        """
+        self._generation += 1
+        generation = self._generation
+        self._section_label("Also starts with Windows — view only")
+        self._placeholder = self._note("Reading scheduled tasks and services…")
+        self.app.run_off_thread(
+            read_inventory,
+            lambda inv, err: self._inventory_done(generation, inv, err))
+
+    def _inventory_done(self, generation, inventory, error) -> None:
+        if generation != self._generation:
             return
+        self._placeholder.destroy()      # keep the section heading
+        if error is not None:
+            self._note(f"Could not read these: {error}")
+            return
+        self._note("These are other places Windows starts things from. They "
+                   "have no switch here on purpose: changing a task or a "
+                   "service is a different mechanism from the Run keys above, "
+                   "and PolyScour does not do it. Nothing below is a "
+                   "recommendation.")
+        for source, title in _SECTIONS:
+            self._render_source(inventory, source, title)
 
-        for it in items:
-            self._render_row(it)
+    def _section_label(self, text: str) -> None:
+        ctk.CTkLabel(self.list, text=text, anchor="w",
+                     font=theme.get("section_title"),
+                     text_color=theme.color("text")
+                     ).grid(sticky="ew", padx=6, pady=(18, 2))
 
-        on = sum(1 for i in items if i.enabled)
-        self.status.configure(
-            text=f"{len(items)} entries, {on} enabled. "
-                 f"Machine-wide entries affect every account and ask for "
-                 f"administrator rights when you change one.")
+    def _note(self, text: str):
+        label = ctk.CTkLabel(self.list, text=text, anchor="w", justify="left",
+                             wraplength=700, font=theme.get("small"),
+                             text_color=theme.color("subtext"))
+        label.grid(sticky="ew", padx=6, pady=(0, 4))
+        return label
+
+    def _render_source(self, inventory, source, title: str) -> None:
+        status = inventory.status(source)
+        entries = inventory.of(source)
+        counted = (f"; {status.in_windows_folder} others, whose programs are "
+                   f"all inside the Windows folder, are not listed"
+                   if status.in_windows_folder else "")
+        ctk.CTkLabel(self.list, text=f"{title} — {len(entries)} listed{counted}",
+                     anchor="w", font=theme.get("body"),
+                     text_color=theme.color("text")
+                     ).grid(sticky="ew", padx=6, pady=(10, 0))
+        if status.error:
+            # Unread is not empty. Said in the source's own section so it
+            # cannot be mistaken for "nothing found".
+            self._note(f"Could not read all of this: {status.error}")
+        elif not entries:
+            self._note("None found.")
+        for entry in entries:
+            self._render_entry(entry)
+
+    def _render_entry(self, entry) -> None:
+        row = ctk.CTkFrame(self.list, fg_color="transparent")
+        row.grid(sticky="ew", padx=6, pady=2)
+        row.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(row, text=entry.name, anchor="w", font=theme.get("body"),
+                     text_color=theme.color("text")
+                     ).grid(row=0, column=0, sticky="ew")
+        ctk.CTkLabel(row, text=describe(entry), anchor="w", justify="left",
+                     wraplength=620, font=theme.get("small"),
+                     text_color=theme.color("subtext")
+                     ).grid(row=1, column=0, sticky="ew")
+        where = f"{entry.mechanism}" + (
+            f"  ·  runs as {entry.runs_as}" if entry.runs_as else "")
+        ctk.CTkLabel(row, text=where, anchor="w", justify="left",
+                     wraplength=620, font=theme.get("small"),
+                     text_color=theme.color("dim")
+                     ).grid(row=2, column=0, sticky="ew")
+        if entry.state:
+            ctk.CTkLabel(row, text=entry.state, anchor="e",
+                         font=theme.get("small"),
+                         text_color=theme.color("subtext")
+                         ).grid(row=0, column=1, rowspan=2, padx=6)
 
     def _render_row(self, it) -> None:
         row = ctk.CTkFrame(self.list, fg_color="transparent")
