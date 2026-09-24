@@ -19,7 +19,8 @@ class RiskLevel(enum.IntEnum):
     Ordered, so a plan can be summarised by its worst member.
     """
     SAFE = 0        # regenerable cache; losing it costs a rebuild
-    LOW = 1         # temporary data no application expects to survive
+    LOW = 1         # temporary data no application expects to survive, or a
+    #                 regenerable cache whose rebuild costs the network or hours
     MODERATE = 2    # data a user might miss
     HIGH = 3        # system state; reversible only through a recorded rollback
     CRITICAL = 4    # irreversible and destructive; not reachable in 0.1

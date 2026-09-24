@@ -57,9 +57,9 @@ Eleven cleaning rules, grouped so you decide by category rather than by file:
 | Explorer thumbnail cache | Safe | No — Windows rebuilds it |
 | DirectX shader cache | Safe | No — regenerated on demand |
 | Chrome / Edge / Firefox cache | Safe | No — rebuilt as you browse |
-| pip download cache | Safe | No — pip re-downloads or rebuilds it |
-| npm package cache | Safe | No — npm fetches it again |
-| Cargo downloaded crates | Safe | No — Cargo downloads them again |
+| pip download cache | Low | No — pip re-downloads or rebuilds it |
+| npm package cache | Low | No — npm fetches it again |
+| Cargo downloaded crates | Low | No — Cargo downloads them again |
 | Application crash dumps | Moderate | **Yes** — moved to the vault |
 
 Browser rules refuse to run while that browser is open, because clearing a cache

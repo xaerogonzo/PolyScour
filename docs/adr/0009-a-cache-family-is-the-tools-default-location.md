@@ -71,8 +71,20 @@ for a cache. A check that fires only when pip is launched one way, and reads
 
 **Residual, stated:** between pip finding a cached wheel and opening it there is a
 window of milliseconds in which a deletion would make that one install fail with a
-missing file. It succeeds on retry, and it costs a re-download. That is what
-`SAFE` means in `RiskLevel` — "losing it costs a rebuild".
+missing file. It succeeds on retry, and it costs a re-download.
+
+**Addendum — the risk label is `low`, not `safe`.** The first version of these
+rules shipped as `safe`, on the reading that `SAFE` means "losing it costs a
+rebuild". That is true, and it is the wrong bar for a *pre-ticked* box. For a
+browser or shader cache the worst case is a slower first use. For a package
+cache the rebuild needs the network: offline, or on a metered or restricted
+connection, "a rebuild" is a failed install or build that nothing on the Clean
+screen warned about, and on this machine the pip cache alone is 6.5 GB. The
+default action of someone who clicks straight through should not be that. So
+pip, npm and Cargo are `low` — offered, described, and unticked — the same
+standing as the temporary-file rules. The data-safety findings (ADR 0010) are
+unchanged; this is a decision about the default, not about whether the clean is
+sound.
 
 ## Decision 3 — The blast radius is set by ceilings and a real layout
 

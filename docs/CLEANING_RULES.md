@@ -71,7 +71,9 @@ presented confidently is worse than an honest failure.
 ## Before you ship one
 
 - [ ] Does the description say what is *not* touched?
-- [ ] Is `risk` honest? `safe` means genuinely regenerable.
+- [ ] Is `risk` honest? `safe` means genuinely regenerable **and cheap to
+      regenerate** — the box is pre-ticked. A cache whose rebuild needs the
+      network or a long build (pip, npm, Cargo) is `low`: adr/0009 addendum.
 - [ ] Does it need a `condition` — would cleaning it while an app is open hurt?
       **Find out, don't assume:** read what the tool does when its cache vanishes
       (pip's `SafeFileCache` tolerates it), and check what Windows does to a file

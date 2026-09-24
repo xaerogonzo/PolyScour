@@ -2,7 +2,7 @@
   "id": "npm-cache",
   "name": "npm package cache",
   "category": "Developer",
-  "risk": "safe",
+  "risk": "low",
   "root_families": [
     "npm_cache"
   ],

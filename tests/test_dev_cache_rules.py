@@ -247,10 +247,39 @@ def test_the_policy_grants_one_family_and_only_delete(tool):
 def test_the_rule_loads_reconciled_with_its_policy(tool):
     rule = rule_for(tool)
     assert rule.id == tool.rule_id
-    assert rule.risk is RiskLevel.SAFE
+    assert rule.risk is RiskLevel.LOW
     assert rule.operation is Operation.DELETE and not rule.reversible
     assert rule.requires_elevation is False
     assert rule.families == (tool.family,)
+
+
+def test_the_rule_is_offered_unticked(tool):
+    """Regenerable, yes -- but the rebuild costs bandwidth and, offline, can be
+    a failed build, which a pre-ticked box would not let anyone see coming. So
+    the default action of a user who clicks straight through leaves it alone
+    (adr/0009 addendum)."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from polyscour.cleaning.planner import recommend
+    from polyscour.contracts import Evidence, Finding, RuleOutcome, ScanResult
+
+    rule = rule_for(tool)
+
+    def finding(risk):
+        return Finding(rule_id=rule.id, title="t", path=Path(r"C:\x\a"),
+                       size_bytes=1, risk=risk, reversible=False,
+                       evidence=Evidence("m", "o", "r"))
+
+    def recommended(risk):
+        now = datetime.now(timezone.utc)
+        result = ScanResult(started_at=now, finished_at=now, outcomes=[
+            RuleOutcome(rule_id=rule.id, findings=[finding(risk)])])
+        (rec,) = recommend(result)
+        return rec.recommended
+
+    assert recommended(RiskLevel.SAFE) is True      # the control: SAFE is ticked
+    assert recommended(rule.risk) is False
 
 
 def test_a_rule_cannot_claim_a_second_family(tool):
