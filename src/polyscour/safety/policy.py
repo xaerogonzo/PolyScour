@@ -43,6 +43,7 @@ class RootFamily(enum.Enum):
     BROWSER_CACHE_EDGE = "browser_cache_edge"
     BROWSER_CACHE_FIREFOX = "browser_cache_firefox"
     CRASH_DUMPS = "crash_dumps"
+    PIP_CACHE = "pip_cache"
 
 
 class Operation(enum.Enum):
@@ -124,6 +125,20 @@ def _resolve(family: RootFamily) -> list[Path]:
 
     if family is RootFamily.CRASH_DUMPS:
         return _env_dir("LOCALAPPDATA", "CrashDumps")
+
+    if family is RootFamily.PIP_CACHE:
+        # pip's DEFAULT cache directory, and only that.
+        #
+        # pip lets a user move its cache: ``PIP_CACHE_DIR``, ``--cache-dir``,
+        # and ``cache-dir`` in any of several ``pip.ini`` files. This resolver
+        # follows none of them, and that is the design rather than a gap.
+        # Every one of those is *configuration*, and configuration is not
+        # authority (see the module docstring): an environment variable or an
+        # ini file that says ``cache-dir = C:\Users\me\Documents`` would turn
+        # "delete pip's cache" into "delete Documents", using nothing but data
+        # somebody else controls. A person with a redirected cache simply gets
+        # nothing to scan here; the default location is still only ever pip's.
+        return _env_dir("LOCALAPPDATA", "pip", "Cache")
 
     raise ValueError(f"no resolver for {family!r}")
 
@@ -233,6 +248,25 @@ POLICY: dict[str, PolicyEntry] = {
         operations=frozenset({_O.VAULT}),
         scope=Scope.ONE_DIRECTORY,
         max_candidates=5_000, max_bytes=16 * 1024**3, max_depth=2),
+
+    # pip's download and built-wheel cache. DELETE, because it provably
+    # regenerates: pip re-downloads what it needs, and ``pip cache purge`` is
+    # this operation. One tree, so ONE_DIRECTORY.
+    #
+    # max_depth is 8 against a measured layout of 6 (``http-v2/a/b/c/d/e/<hash>``):
+    # deep enough that the whole real tree is reachable, shallow enough that a
+    # planted structure cannot make a walk unbounded. A tree deeper than pip
+    # itself creates is simply left alone.
+    #
+    # No min_age_days: unlike C:\Windows\Temp this is not a working directory
+    # something else may be mid-way through writing, and there is no elevated
+    # path here (the location is under %LOCALAPPDATA%), so nothing needs a
+    # floor the helper could trust.
+    "pip-cache": PolicyEntry(
+        families=frozenset({_C.PIP_CACHE}),
+        operations=frozenset({_O.DELETE}),
+        scope=Scope.ONE_DIRECTORY,
+        max_candidates=200_000, max_bytes=32 * 1024**3, max_depth=8),
 }
 
 
