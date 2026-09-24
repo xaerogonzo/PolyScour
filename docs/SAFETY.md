@@ -46,16 +46,27 @@ only `safety/policy.py` knows what a family resolves to:
 ```
 USER_TEMP · WINDOWS_TEMP · THUMBNAIL_CACHE · SHADER_CACHE
 BROWSER_CACHE_CHROME · BROWSER_CACHE_EDGE · BROWSER_CACHE_FIREFOX · CRASH_DUMPS
-PIP_CACHE
+PIP_CACHE · NPM_CACHE · CARGO_REGISTRY_CACHE
 ```
 
 **A family for a tool's cache names the tool's default location, never its
 configured one.** Tools let users move their caches (`PIP_CACHE_DIR`, a `pip.ini`,
-`--cache-dir`), and every one of those is configuration — data somebody else
-controls. A resolver that followed it would turn "delete pip's cache" into "delete
-whatever a setting names". So `PIP_CACHE` is `%LOCALAPPDATA%\pip\Cache` and reads
-no pip configuration at all; a redirected cache is simply not covered. Every
-developer-tool family follows this. See `docs/adr/0009` and threat T25.
+`NPM_CONFIG_CACHE`, an `.npmrc`, `CARGO_HOME`), and every one of those is
+configuration — data somebody else controls. A resolver that followed it would turn
+"delete pip's cache" into "delete whatever a setting names". So `PIP_CACHE` is
+`%LOCALAPPDATA%\pip\Cache` and reads no pip configuration at all; a redirected cache
+is simply not covered. Every developer-tool family follows this. See
+`docs/adr/0009` and threat T25.
+
+**And it names the *narrowest* directory that is safe to clean, which is often
+smaller than "the cache".** `NPM_CACHE` is `npm-cache\_cacache`, not `npm-cache`
+(which also holds installed `npx` trees). `CARGO_REGISTRY_CACHE` is
+`.cargo\registry\cache`, not `.cargo\registry` (whose `src` breaks builds if
+half-removed) and not `.cargo` (which holds installed tools). The executor unlinks
+files and can be stopped partway, so a cache qualifies only if **every partial
+state** is safe — established by testing the tool, not by its documentation.
+Cargo `src` and Gradle `caches` failed that test and are refused. See
+`docs/adr/0010` and threat T26.
 
 `POLICY` maps each rule id to the families it may use, the operations it may
 perform, its expected scope and its ceilings. **A rule id absent from `POLICY`

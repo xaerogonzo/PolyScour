@@ -48,7 +48,7 @@ A single vertical slice, end to end and heavily tested:
 Launch → scan → findings → plan → confirm → clean → verify → record → undo
 ```
 
-Nine cleaning rules, grouped so you decide by category rather than by file:
+Eleven cleaning rules, grouped so you decide by category rather than by file:
 
 | Rule | Risk | Reversible |
 |---|---|---|
@@ -58,21 +58,41 @@ Nine cleaning rules, grouped so you decide by category rather than by file:
 | DirectX shader cache | Safe | No — regenerated on demand |
 | Chrome / Edge / Firefox cache | Safe | No — rebuilt as you browse |
 | pip download cache | Safe | No — pip re-downloads or rebuilds it |
+| npm package cache | Safe | No — npm fetches it again |
+| Cargo downloaded crates | Safe | No — Cargo downloads them again |
 | Application crash dumps | Moderate | **Yes** — moved to the vault |
 
 Browser rules refuse to run while that browser is open, because clearing a cache
 out from under a live profile can corrupt it. If process enumeration fails, the
 rule skips rather than guessing.
 
-**The pip rule covers pip's default cache location and nothing else.** If you have
-moved your cache with `PIP_CACHE_DIR` or a `pip.ini`, PolyScour does not follow
-that — those are settings someone else can change, and a cleaner that obeyed them
-could be pointed at any folder. It has no "pip is not running" check either, and
-that is deliberate rather than an omission: pip copes with its cache disappearing
-mid-run, Windows refuses to delete a file pip has open (so it is skipped and
-reported, like any file in use), and a check by process name cannot see
-`python -m pip` at all. The worst case is one install re-downloading a file.
-`docs/adr/0009` has the evidence.
+**The developer-tool rules (pip, npm, Cargo) cover each tool's default cache
+location and nothing else.** If you have moved a cache with `PIP_CACHE_DIR`, a
+`pip.ini`, `NPM_CONFIG_CACHE`, an `.npmrc` or `CARGO_HOME`, PolyScour does not
+follow that — those are settings someone else can change, and a cleaner that obeyed
+them could be pointed at any folder. None has a "tool is not running" check, and
+that is deliberate rather than an omission: each tool copes with its cache
+disappearing, Windows refuses to delete a file a tool has open (so it is skipped
+and reported, like any file in use), and a check by process name cannot see
+`python -m pip` at all. The worst case is one install re-downloading a file, and a
+machine that is offline needs its packages back. `docs/adr/0009` has the evidence.
+
+**They clean the narrowest part of each cache that is safe, and that is smaller than
+"the cache" on purpose.** PolyScour removes files one at a time and can be stopped
+partway, so a cache qualifies only if the tool recovers from *any* half-deleted
+state. That was tested, not assumed:
+
+- **npm** — only its content store (`_cacache`). Every combination of deleted files
+  in a real cache ended in a working install or a clean "not cached".
+- **Cargo** — only the downloaded `.crate` files. Its extracted sources are **left
+  alone**: with a crate's `.cargo-ok` marker kept and its sources gone, builds fail
+  and do not recover. Installed tools in `~/.cargo/bin` are never touched.
+- **Gradle** — **no rule.** Deleting just 10% of its cache at random left it unable
+  to build in 2 of 6 trials, and it never recovered. Its size (579 MB on the
+  measured machine) was never the question; whether a half-cleaned cache still
+  works was.
+
+`docs/adr/0010` has the experiments.
 
 The ordinary run is **entirely unelevated**. Anything needing administrator
 rights is skipped and said so plainly — and then offered as a retry you can

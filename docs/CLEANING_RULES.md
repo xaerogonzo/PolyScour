@@ -83,6 +83,15 @@ presented confidently is worse than an honest failure.
       *default* location and read none of the tool's configuration — an
       environment variable or ini file is data, and following it lets somebody
       else aim the rule (`docs/adr/0009`, threat T25).
+- [ ] **What does a PARTIAL deletion leave?** The executor unlinks files and can be
+      stopped partway — cancelled, a file locked, a crash — so a rule is only safe
+      if the tool recovers from *any* partial state, not only from empty. Test it
+      on a throwaway copy with an exhaustive or seeded sweep of deleted subsets, and
+      do not take the tool's documentation, or its `CACHEDIR.TAG`, as the answer:
+      Cargo's `registry/src` (a surviving `.cargo-ok` marker) and Gradle's `caches`
+      (10% deleted broke 2 of 6 trials) both looked disposable and both broke, and
+      neither recovered. Name the *narrowest* directory that passes — often smaller
+      than "the cache" (`docs/adr/0010`, threat T26).
 - [ ] Are the ceilings tight enough that a mistake aborts rather than deletes?
       Is `max_depth` **measured against the real layout**, and is there a test that
       builds that layout and requires every file to be found? A ceiling that stops

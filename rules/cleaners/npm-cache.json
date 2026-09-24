@@ -1,0 +1,20 @@
+{
+  "id": "npm-cache",
+  "name": "npm package cache",
+  "category": "Developer",
+  "risk": "safe",
+  "root_families": [
+    "npm_cache"
+  ],
+  "patterns": [
+    "*"
+  ],
+  "conditions": [],
+  "min_age_days": 0,
+  "expected_scope": "one_directory",
+  "description": "The package tarballs and registry responses npm keeps so it does not download them twice (its _cacache store, the same thing 'npm cache clean' removes). npm treats a missing entry as a cache miss and fetches it again, so the cost is bandwidth, and an install with no network will need it back. If npm is mid-install when this runs, one fetch may fail once and then succeed. Installed packages, node_modules, 'npx' installs and npm's logs and settings are NOT touched. Only npm's default cache location is covered: a cache moved with NPM_CONFIG_CACHE or an .npmrc is not followed.",
+  "limits": {
+    "max_candidates": 200000
+  },
+  "requires_elevation": false
+}
