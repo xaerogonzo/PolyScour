@@ -302,3 +302,90 @@ def test_the_view_is_derived_from_the_entry_not_chosen_by_the_caller(
     monkeypatch.setattr(client, "request", fake_request)
     assert service._write(_machine_item(hive, "any"), False) is True
     assert asked[0]["wow6432"] is expected
+
+
+# ── a cancelled request is refused, wherever the cancel arrives ──────────────
+
+def _control(tmp_path, *, cancelled):
+    request = tmp_path / "request.json"
+    request.write_text("{}", encoding="utf-8")
+    if cancelled:
+        (tmp_path / "cancel").write_text("1", encoding="utf-8")
+    return helper._Control(request)
+
+
+def test_a_request_cancelled_before_the_helper_starts_is_refused_and_writes_nothing(
+        scratch, tmp_path):
+    """The user cancels while the UAC prompt is still up and answers it later.
+    The helper that then starts must find the sentinel and do nothing."""
+    put(scratch.run32, "Tool", RAW32)
+    response = helper.handle(machine_request(raw=RAW32, wow6432=True),
+                             _control(tmp_path, cancelled=True))
+    assert response.ok is False and response.refused_by == "policy"
+    assert "cancelled" in response.detail
+    assert get(scratch.ap32, "Tool") is None and get(scratch.ap, "Tool") is None
+
+
+def test_the_same_request_uncancelled_is_written(scratch, tmp_path):
+    """The control for the test above: without it the refusal could be a
+    blanket no."""
+    put(scratch.run32, "Tool", RAW32)
+    response = helper.handle(machine_request(raw=RAW32, wow6432=True),
+                             _control(tmp_path, cancelled=False))
+    assert response.ok, response.detail
+    assert get(scratch.ap32, "Tool")[0] == 0x03
+
+
+def test_a_cancel_that_arrives_after_validation_still_stops_the_write(scratch):
+    """Everything before the write is a few registry reads, but the last look
+    is immediately before the write, not only at the top."""
+    put(scratch.run32, "Tool", RAW32)
+
+    class Late:
+        def __init__(self):
+            self.looks = 0
+
+        def cancelled(self):
+            self.looks += 1
+            return self.looks >= 2          # clear at the top, set before the write
+
+    late = Late()
+    response = helper.handle(machine_request(raw=RAW32, wow6432=True), late)
+    assert response.ok is False and "cancelled" in response.detail
+    assert late.looks == 2
+    assert get(scratch.ap32, "Tool") is None
+
+
+def test_the_service_passes_the_cancel_event_to_the_helper_and_closes_the_row(
+        monkeypatch):
+    """The screen owns the Event; the service must hand that same object to the
+    client, and a refused request must leave History saying nothing changed."""
+    import threading
+
+    import polyscour.elevation.client as client
+    seen = {}
+
+    def fake_request(operation, cancel=None, **kw):
+        seen["cancel"] = cancel
+        return types.SimpleNamespace(
+            ok=False, detail="cancelled before it started, so nothing was changed")
+
+    monkeypatch.setattr(client, "request", fake_request)
+
+    class Ledger:
+        def __init__(self):
+            self.events = []
+
+        def record_startup_change(self, *a, **k):
+            self.events.append("record")
+            return 1
+
+        def mark_startup_reverted(self, row_id):
+            self.events.append(f"reverted:{row_id}")
+
+    ledger, event = Ledger(), threading.Event()
+    item = _machine_item("HKLM_WOW6432", "any")
+    result = service.apply_change(item, False, ledger, event)
+    assert seen["cancel"] is event
+    assert result.changed is False and "cancelled" in result.reason
+    assert ledger.events == ["record", "reverted:1"]

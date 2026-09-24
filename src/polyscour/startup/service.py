@@ -60,7 +60,7 @@ class UndoResult:
     elevated: bool = False
 
 
-def _write(item: StartupItem, enabled: bool) -> bool:
+def _write(item: StartupItem, enabled: bool, cancel=None) -> bool:
     """Flip one switch, elevating only where the hive requires it.
 
     Returns whether administrator rights were used. Raises
@@ -81,7 +81,7 @@ def _write(item: StartupItem, enabled: bool) -> bool:
     from polyscour.elevation.protocol import Operation
     from polyscour.startup.manager import is_wow6432
 
-    response = request(Operation.SET_MACHINE_STARTUP_APPROVAL,
+    response = request(Operation.SET_MACHINE_STARTUP_APPROVAL, cancel=cancel,
                        value_name=item.entry.value_name,
                        enabled=enabled,
                        expected_raw_value=item.entry.raw_value,
@@ -91,8 +91,13 @@ def _write(item: StartupItem, enabled: bool) -> bool:
     return True
 
 
-def apply_change(item: StartupItem, enabled: bool, ledger) -> ChangeResult:
+def apply_change(item: StartupItem, enabled: bool, ledger,
+                 cancel=None) -> ChangeResult:
     """Set one entry's switch, having checked that we may.
+
+    ``cancel`` is a ``threading.Event`` the screen can set while an
+    administrator request is waiting; the helper then refuses to start the
+    change, and the ledger row is closed like any other refused request.
 
     The veto runs here even though the interface already greyed the row out.
     The list a user is looking at was built at some earlier moment, and the
@@ -111,7 +116,7 @@ def apply_change(item: StartupItem, enabled: bool, ledger) -> ChangeResult:
         was_enabled=item.enabled, now_enabled=enabled)
 
     try:
-        elevated = _write(item, enabled)
+        elevated = _write(item, enabled, cancel)
     except ElevationRefused as exc:
         # The row exists and describes a change that did not happen. Close it
         # rather than leaving History asserting something false. Identical

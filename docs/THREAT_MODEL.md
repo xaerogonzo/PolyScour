@@ -238,6 +238,23 @@ read-back looks in the same view it wrote. Net change to what the elevated
 process can write: one additional approval key, `StartupApproved\Run32`, and
 only for a value that already exists in the 32-bit `Run` key.
 
+**Cancelling a pending request must not be a lie.** The UAC prompt can sit
+behind other windows, and the row stays locked until it is answered. A Cancel
+that only made the screen *look* cancelled would be worse than none: answering
+the prompt later would start a helper and make the change the user had just
+been told would not happen. So `client._watch_for_cancel` writes the cancel
+sentinel from its own thread the moment the screen's event is set — `_launch`
+blocks for as long as the prompt is showing, so the wait loop cannot — and the
+helper's `SET_MACHINE_STARTUP_APPROVAL` checks that sentinel twice, at the top
+and again immediately before the write, and refuses with "cancelled before it
+started, so nothing was changed". A refusal is the only thing this can cause, so
+it passes "may narrow, never widen".
+
+**What Cancel cannot do:** dismiss the Windows prompt (that is Windows'), so an
+unanswered prompt stays up and the row stays locked until it is answered or
+Windows drops it; and beat a helper that has already written, which is reported
+as done. The remaining race is a Cancel and a "Yes" within one 0.2 s poll.
+
 ### T14 — The Startup Manager is used to make a machine less safe
 
 **Less mitigated than it was, and this section says so rather than being

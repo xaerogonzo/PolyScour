@@ -806,3 +806,93 @@ def test_a_silent_helper_still_times_out(staging, monkeypatch):
 
     assert response.ok is False
     assert "did not answer in time" in response.detail
+
+
+# ── a cancel raised while the UAC prompt is up reaches the helper ────────────
+
+def test_a_cancel_raised_while_the_prompt_is_showing_writes_the_sentinel_at_once(
+        staging, monkeypatch):
+    """`_launch` blocks for as long as the prompt is on screen, and the wait
+    loop only starts after it returns. Without a watcher, a cancel raised in
+    that time is not written until the user has already answered -- by which
+    time the helper is running. The sentinel has to exist BEFORE a late "Yes"."""
+    import threading
+    import time as real_time
+
+    import polyscour.elevation.client as client
+
+    launched, release = threading.Event(), threading.Event()
+    seen = {}
+
+    def launch(request_path):
+        seen["cancel"] = request_path.with_name("cancel")
+        launched.set()
+        assert release.wait(10), "the test never released the prompt"
+        request_path.with_suffix(".json.response").write_text(
+            Response(False, "cancelled", "policy").to_json(), encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(client, "_launch", launch)
+    cancel, result = threading.Event(), []
+    worker = threading.Thread(target=lambda: result.append(client.request(
+        Operation.SET_MACHINE_STARTUP_APPROVAL, cancel=cancel,
+        value_name="Tool", enabled=False, expected_raw_value="x",
+        wow6432=False)))
+    worker.start()
+    try:
+        assert launched.wait(10)
+        assert not seen["cancel"].exists()           # nothing asked yet
+
+        cancel.set()                                 # the prompt is STILL up
+        deadline = real_time.monotonic() + 5
+        while not seen["cancel"].exists() and real_time.monotonic() < deadline:
+            real_time.sleep(0.02)
+        assert seen["cancel"].exists(), (
+            "the sentinel was not written while the prompt was still showing")
+    finally:
+        release.set()
+        worker.join(10)
+    assert result and result[0].ok is False
+
+
+def test_an_uncancelled_request_never_gets_a_sentinel(staging, monkeypatch):
+    """The control: the watcher only writes when told to."""
+    import threading
+
+    import polyscour.elevation.client as client
+    seen = {}
+
+    def launch(request_path):
+        seen["cancel"] = request_path.with_name("cancel")
+        request_path.with_suffix(".json.response").write_text(
+            Response(True, "done").to_json(), encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(client, "_launch", launch)
+    response = client.request(Operation.DELETE_APPROVED_PATH,
+                              cancel=threading.Event(),
+                              rule_id="user-temp", path=r"C:\Temp\x.tmp")
+    assert response.ok is True
+    assert not seen["cancel"].exists()
+
+
+def test_the_cancel_watcher_stops_with_the_request(staging, monkeypatch):
+    """No thread left polling for an Event nobody will ever set."""
+    import threading
+
+    import polyscour.elevation.client as client
+
+    def launch(request_path):
+        request_path.with_suffix(".json.response").write_text(
+            Response(True, "done").to_json(), encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(client, "_launch", launch)
+    def watchers():
+        return sum(t.name == "polyscour-cancel-watch"
+                   for t in threading.enumerate())
+
+    before = watchers()
+    client.request(Operation.DELETE_APPROVED_PATH, cancel=threading.Event(),
+                   rule_id="user-temp", path=r"C:\Temp\x.tmp")
+    assert watchers() == before

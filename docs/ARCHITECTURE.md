@@ -601,6 +601,16 @@ machine it did: judged against the row's old state it read "already in that
 state" and snapped the switch to a position the registry did not have). When
 the answer arrives — success, refusal or error alike — the list is **re-read
 from the registry** rather than patched from what the row remembered.
+
+The wait itself is visible. Windows may keep the prompt behind other windows, or
+only blinking in the taskbar, for minutes, so a pending row says what it is
+waiting for and shows a **Cancel**. Cancel sets the `threading.Event` that
+`service.apply_change` hands to `client.request`; the client writes the cancel
+sentinel from a watcher thread (its wait loop starts only after the blocking
+`ShellExecute` returns), and the helper refuses to start a cancelled change
+(T13). Cancel cannot dismiss the prompt — the row stays locked until it is
+answered — but answering it later changes nothing, and the row's History entry
+is closed as not done.
 ## Threading
 
 Tk is not thread-safe. One rule covers it:

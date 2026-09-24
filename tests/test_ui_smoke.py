@@ -667,17 +667,19 @@ def machine_row(app, monkeypatch):
     view = app.get_view("startup")
     monkeypatch.setattr(startup_view, "list_items", registry.items)
     monkeypatch.setattr(startup_view, "read_inventory", _inventory_fixture)
-    pending, applied = [], []
+    pending, applied, cancels = [], [], []
     monkeypatch.setattr(app, "run_off_thread",
                         lambda work, done: pending.append((work, done)))
 
-    def fake_apply(item, enabled, ledger):
+    def fake_apply(item, enabled, ledger, cancel=None):
         applied.append(enabled)
+        cancels.append(cancel)
         return types.SimpleNamespace(changed=True, reason="", elevated=True)
     monkeypatch.setattr(startup_view.service, "apply_change", fake_apply)
     view._pending.clear()
     view.refresh()
     pending.clear()                       # drop the inventory read
+    view._cancel_events = cancels
     return view, registry, pending, applied
 
 
@@ -801,3 +803,87 @@ def test_a_user_entry_is_not_locked_or_left_pending(app, monkeypatch):
     var.set(False)
     view._toggle(item, var)
     assert calls == [False] and view._pending == set()
+
+
+# ── Startup: the wait is visible, and can be cancelled ───────────────────────
+
+_WAIT_HINT = "Waiting for the Windows administrator prompt"
+
+
+def _cancel_button(view):
+    (button,) = [w for w in _walk(view.list)
+                 if isinstance(w, ctk.CTkButton)
+                 and w.cget("text") in ("Cancel", "Cancelling…")]
+    return button
+
+
+def _start_request(view, registry):
+    item = registry.items()[0]
+    var = _the_switch(view)._variable
+    var.set(False)
+    view._toggle(item, var)
+    return item
+
+
+def test_a_row_offers_no_cancel_and_no_wait_message_until_a_request_is_pending(
+        machine_row):
+    view, _, _, _ = machine_row
+    assert _cancel_button(view).winfo_manager() == ""      # built, not shown
+    assert _WAIT_HINT not in "\n".join(_texts(view))
+
+
+def test_a_pending_row_says_what_it_is_waiting_for_and_offers_cancel(machine_row):
+    view, registry, _, _ = machine_row
+    _start_request(view, registry)
+    assert _cancel_button(view).winfo_manager() == "grid"
+    text = "\n".join(_texts(view))
+    assert _WAIT_HINT in text and "taskbar" in text
+
+
+def test_a_rebuilt_row_still_shows_the_wait_and_its_way_out(machine_row):
+    view, registry, _, _ = machine_row
+    _start_request(view, registry)
+    view.refresh()
+    assert _cancel_button(view).winfo_manager() == "grid"
+    assert _WAIT_HINT in "\n".join(_texts(view))
+
+
+def test_cancel_sets_the_event_the_service_receives_and_says_what_it_promises(
+        machine_row):
+    view, registry, pending, _ = machine_row
+    item = _start_request(view, registry)
+    event = view._cancels[item.identity]
+    assert not event.is_set()
+
+    _cancel_button(view).invoke()
+
+    assert event.is_set()
+    button = _cancel_button(view)
+    assert button.cget("text") == "Cancelling…"
+    assert button.cget("state") == "disabled"                 # once is enough
+    assert "nothing will be changed" in view.status.cget("text")
+    _answer(pending, 0)                                       # runs the service
+    assert view._cancel_events[0] is event, (
+        "the service was not handed the screen's own cancel event")
+
+
+def test_the_wait_and_the_cancel_state_end_with_the_answer(machine_row):
+    view, registry, pending, _ = machine_row
+    item = _start_request(view, registry)
+    _cancel_button(view).invoke()
+    refused = types.SimpleNamespace(
+        changed=False, reason="cancelled before it started, so nothing was changed",
+        elevated=False)
+    _answer(pending, 0, result=refused)
+    assert view._cancels == {} and view._pending == set()
+    assert _cancel_button(view).winfo_manager() == ""
+    assert _WAIT_HINT not in "\n".join(_texts(view))
+    assert "nothing was changed" in view.status.cget("text")
+    assert _the_switch(view).cget("state") == "normal"
+    assert item.identity not in view._pending
+
+
+def test_cancel_with_nothing_pending_does_nothing(machine_row):
+    view, registry, _, _ = machine_row
+    view._cancel(registry.items()[0].identity)               # must not raise
+    assert view._cancels == {}
