@@ -16,6 +16,8 @@ Only what it needs to do its job, and only while it is doing it:
 | File modification times | To honour a rule's `min_age_days` |
 | Running process **names** (via `psutil`) | To refuse to clear a browser cache while the browser is open |
 | Windows health via PowerShell — pending reboot, uptime, recent KBs, device status | The dashboard's System health tile |
+| The Run and `RunOnce` registry keys, the Startup folders' listings, and the list of automatic services (name, program path, account) | The Startup screen: what starts with Windows |
+| Every scheduled task's definition, via `schtasks.exe /query /xml` (the program each runs, the account, when it triggers) | The Startup screen's view-only list of tasks that start at logon or boot. Read-only; nothing is stored |
 | Environment variables (`%TEMP%`, `%LOCALAPPDATA%`, `%USERPROFILE%`, …) | To resolve root families and the protected-locations denylist |
 
 PolyScour does **not** read file *contents*, except to compute a SHA-256 of a

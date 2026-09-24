@@ -79,11 +79,13 @@ def _write(item: StartupItem, enabled: bool) -> bool:
 
     from polyscour.elevation.client import request
     from polyscour.elevation.protocol import Operation
+    from polyscour.startup.manager import is_wow6432
 
     response = request(Operation.SET_MACHINE_STARTUP_APPROVAL,
                        value_name=item.entry.value_name,
                        enabled=enabled,
-                       expected_raw_value=item.entry.raw_value)
+                       expected_raw_value=item.entry.raw_value,
+                       wow6432=is_wow6432(item.entry.hive_name))
     if not response.ok:
         raise ElevationRefused(response.detail)
     return True

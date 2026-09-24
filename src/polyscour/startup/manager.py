@@ -34,7 +34,9 @@ Three facts observed on a real machine, each of which a guess gets wrong
    items and must not be listed as such.
 3. **The record is per-hive.** The HKCU approval key governs HKCU ``Run``
    values only. There is an HKLM equivalent, and writing it needs elevation,
-   which 0.1 does not have.
+   which 0.1 does not have. And the **32-bit** machine-wide ``Run`` key has its
+   own record, ``StartupApproved\Run32``: reading ``Run`` for those entries
+   reports them all enabled.
 
 What this refuses to conclude
 -----------------------------
@@ -60,7 +62,31 @@ from polybedrock.startup import RunEntry, iter_run_entries
 #: reported; writing it is refused by policy until there is an elevated helper.
 _APPROVED = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 
+#: Where Windows keeps the approval record for the **32-bit** machine-wide
+#: ``Run`` key (``HKLM\SOFTWARE\WOW6432Node\...\Run``). Observed, not assumed: on
+#: a real machine the one 32-bit entry's record is here and absent from
+#: ``Run``. Reading ``Run`` for these entries reports every one as enabled, even
+#: one switched off in Task Manager -- the screen would state a false fact.
+_APPROVED_32 = (
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32")
+
+#: The ``hive_name`` polybedrock gives the 32-bit machine-wide Run key.
+WOW6432_HIVE = "HKLM_WOW6432"
+
 _HIVES = {"HKCU": winreg.HKEY_CURRENT_USER, "HKLM": winreg.HKEY_LOCAL_MACHINE}
+
+
+def is_wow6432(hive_name: str) -> bool:
+    """Whether this entry lives in the 32-bit view of the machine-wide key."""
+    return hive_name == WOW6432_HIVE
+
+
+def approval_key(hive_name: str) -> str:
+    """The ``StartupApproved`` subkey that governs entries of this hive.
+
+    A closed choice between two constants, never built from the entry.
+    """
+    return _APPROVED_32 if is_wow6432(hive_name) else _APPROVED
 
 _ENABLED_BYTE = 0x02
 _DISABLED_BYTE = 0x03
@@ -118,7 +144,7 @@ def read_approvals(hive_name: str) -> dict[str, bool]:
         return {}
     out: dict[str, bool] = {}
     try:
-        with winreg.OpenKey(hive, _APPROVED) as key:
+        with winreg.OpenKey(hive, approval_key(hive_name)) as key:
             i = 0
             while True:
                 try:
@@ -180,7 +206,7 @@ def set_enabled(item: StartupItem, enabled: bool) -> None:
     whether it should happen.
     """
     hive = _HIVES[item.entry.hive_name.split("_")[0]]
-    with winreg.CreateKey(hive, _APPROVED) as key:
+    with winreg.CreateKey(hive, approval_key(item.entry.hive_name)) as key:
         winreg.SetValueEx(key, item.entry.value_name, 0, winreg.REG_BINARY,
                           _approval_blob(enabled))
 
