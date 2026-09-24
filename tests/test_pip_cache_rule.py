@@ -106,9 +106,32 @@ def test_the_policy_grants_exactly_one_family_and_only_delete():
     assert entry.min_age_days == 0
 
 
+def test_the_rule_is_offered_unticked(rule):
+    """Regenerable, but the rebuild costs bandwidth and, offline, can be a
+    failed install -- not something a pre-ticked box should decide for anyone
+    (adr/0009 addendum)."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from polyscour.cleaning.planner import recommend
+    from polyscour.contracts import Evidence, Finding, RuleOutcome, ScanResult
+
+    def recommended(risk):
+        now = datetime.now(timezone.utc)
+        f = Finding(rule_id=rule.id, title="t", path=Path(r"C:\x\a"),
+                    size_bytes=1, risk=risk, reversible=False,
+                    evidence=Evidence("m", "o", "r"))
+        (rec,) = recommend(ScanResult(started_at=now, finished_at=now, outcomes=[
+            RuleOutcome(rule_id=rule.id, findings=[f])]))
+        return rec.recommended
+
+    assert recommended(RiskLevel.SAFE) is True      # the control
+    assert recommended(rule.risk) is False
+
+
 def test_the_rule_loads_reconciled_with_its_policy(rule):
     assert rule.id == RULE_ID
-    assert rule.risk is RiskLevel.SAFE
+    assert rule.risk is RiskLevel.LOW
     assert rule.operation is Operation.DELETE and not rule.reversible
     assert rule.requires_elevation is False
     assert rule.families == (RootFamily.PIP_CACHE,)

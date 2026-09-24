@@ -2,7 +2,7 @@
   "id": "cargo-registry-cache",
   "name": "Cargo downloaded crates",
   "category": "Developer",
-  "risk": "safe",
+  "risk": "low",
   "root_families": [
     "cargo_registry_cache"
   ],

@@ -2,7 +2,7 @@
   "id": "pip-cache",
   "name": "pip download cache",
   "category": "Developer",
-  "risk": "safe",
+  "risk": "low",
   "root_families": [
     "pip_cache"
   ],
