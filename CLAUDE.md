@@ -1,4 +1,4 @@
-@D:\Claude Co worker\Token Save Manager Source\templates\project-baseline.md
+@project-baseline.md
 
 # PolyScour — Claude Project Instructions
 
@@ -32,13 +32,6 @@ alarming-but-meaningless number this product exists to replace.
 > **Never force.** No handle closing, no read-only bit clearing, no aggressive
 > deletion. A locked file is a normal condition on a live machine. Skip it,
 > report it, continue.
-
-## Tokensave: use it first
-
-Tokensave is active. **Before reaching for `Read` or `Grep`, try a tokensave
-tool.** `tokensave_context` for exploration, `tokensave_search` for a known
-symbol, `tokensave_callers`/`tokensave_callees` for call graphs. Fall back to
-`Read` only when you need an implementation body to edit it.
 
 ## Project overview
 
@@ -109,7 +102,9 @@ src/polyscour/
 │   ├── manager.py    Read Run keys + the StartupApproved byte; TargetState
 │   ├── policy.py     veto() absolute; requires_elevation() a cost, not a
 │   │                 refusal — THE AUTHORITY for autoruns
-│   └── service.py    veto -> ledger -> registry (or helper), and the undo
+│   ├── service.py    veto -> ledger -> registry (or helper), and the undo
+│   └── inventory.py  READ-ONLY: folders, RunOnce, logon/boot tasks, services.
+│                     No writer, no switch (adr/0011). Unread != none found
 └── views/            dashboard, clean, storage, gamemode, startup, history,
                       settings
 rules/cleaners/*.json  Data only. Never executable, never authority.

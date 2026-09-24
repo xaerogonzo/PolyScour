@@ -219,6 +219,25 @@ an installer can rewrite the `Run` value. Re-enabling it then would restore a
 decision nobody made, with PolyScour's name on it — so the `raw_value` recorded
 at change time is compared, and a mismatch refuses rather than writes.
 
+**The 32-bit machine-wide key is a second mechanism, and is named as one.**
+Windows keeps the record for `HKLM\SOFTWARE\WOW6432Node\...\Run` values in
+`HKLM\...\Explorer\StartupApproved\Run32`, not `...\Run`. Before this was fixed
+the Startup screen read `Run` for those entries and so showed every one as
+enabled, including one switched off in Task Manager (measured on a real
+machine: the one 32-bit entry's record is in `Run32`, absent from `Run`); and
+the helper knew only the 64-bit key, so a change to such an entry was refused as
+"not a machine-wide startup entry" — or, if a same-named value existed in both
+views, wrote the wrong record.
+
+The helper now takes a `wow6432` boolean. It **chooses between exactly two
+compiled-in pairs** and can name no key. It passes the "may narrow, never
+widen" test the way `expected_raw_value` does: the value must already exist in
+the Run key *of the chosen view*, and its data must match what the GUI saw, or
+nothing is written — a same-named value in the other view licenses nothing. The
+read-back looks in the same view it wrote. Net change to what the elevated
+process can write: one additional approval key, `StartupApproved\Run32`, and
+only for a value that already exists in the 32-bit `Run` key.
+
 ### T14 — The Startup Manager is used to make a machine less safe
 
 **Less mitigated than it was, and this section says so rather than being
@@ -303,7 +322,7 @@ closed set of named operations with structured parameters:
 |---|---|---|
 | `DeleteApprovedPath` | `rule_id`, `path` | `windows-temp` is skipped without it |
 | `DeleteApprovedPathsForRule` | `rule_id`, `exclusions` | per-file elevation is several hundred prompts — T19 |
-| `SetMachineStartupApproval` | `value_name`, `enabled`, `expected_raw_value` | HKLM startup entries are refused without it |
+| `SetMachineStartupApproval` | `value_name`, `enabled`, `expected_raw_value`, `wow6432` | HKLM startup entries are refused without it. `wow6432` chooses between **two fixed** (Run key, approval key) pairs — see T13 |
 
 Note what the second row does *not* take. It is the only operation here that
 cannot be told which file to act on, and that is the point of it.
@@ -844,6 +863,35 @@ wakes to find a row for a process that was never actually suspended performs a
 harmless resume on something already running. The reverse ordering would leave
 a frozen process with no row, which nothing — supervisor or startup — would
 ever find.
+
+### T27 — The startup inventory launches a program, or is turned into a writer
+
+**What could go wrong.** The Startup inventory (ADR 0011) is the first place
+PolyScour runs another Windows program purely to *read*: `schtasks.exe`. Two
+failures are possible. The program that runs is not the one intended, or it is
+given something it treats as a command. Or the module gains a write over time —
+"just a toggle for tasks" — without the decision the invariants require.
+
+**Mitigations.**
+- The executable is `%SystemRoot%\System32\schtasks.exe` by absolute path,
+  `shell=False`, and the argument list is the constant `/query /xml ONE`. No
+  value read from a task, a service or the registry reaches a command line. A
+  test asserts exactly this and fails on a shell or an extra argument.
+- The module has no write: a test greps its code for registry writes, file
+  deletion and `schtasks` mutating verbs, and a companion test plants each one
+  to prove the check can fail.
+- Nothing is launched from what is read. A task's or service's command is shown,
+  never executed, and `.lnk` files are listed, never opened.
+- No `RootFamily`, `PolicyEntry`, helper operation or ledger row is added, so
+  the guard chain and the closed elevated operation set are untouched.
+
+**What a hostile machine can still do.** Plant a task, service or shortcut whose
+*name* is misleading, or whose program lives in the Windows folder (hidden by
+the location filter, counted in the "not listed" figure). The filter is a
+statement about location, not trust; the count is shown so the omission is
+visible. A task whose XML is malformed is reported as unparsed, not skipped
+quietly. Replacing `schtasks.exe` itself needs administrator rights, which is
+outside what this product defends against (see Non-goals).
 
 ## Developer-tool caches
 

@@ -335,6 +335,11 @@ holds at any privilege level:
 |---|---|
 | `scope != "user"` | `HKLM` affects every account, so changing it asks for administrator rights |
 
+The registry key written is named, per entry: `HKCU`/`HKLM` entries →
+`...\Explorer\StartupApproved\Run`; the 32-bit machine-wide entries
+(`HKLM\SOFTWARE\WOW6432Node\...\Run`) → `...\Explorer\StartupApproved\Run32`,
+which is where Windows keeps their record. Nothing else is written.
+
 A cost is something a user can choose to pay; a refusal is not. Collapsing them
 into one string — which is what this file described until the helper landed —
 either hides an available action or offers an impossible one.

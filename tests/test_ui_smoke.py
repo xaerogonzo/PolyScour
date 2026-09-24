@@ -519,3 +519,285 @@ def test_open_storage_navigates_and_does_nothing_else(clean_screen, app, monkeyp
                  if isinstance(w, ctk.CTkButton)]
     button.invoke()
     assert seen == ["storage"]
+
+
+# ── Startup: the view-only inventory ─────────────────────────────────────────
+
+def _inventory_fixture():
+    from polyscour.startup.inventory import (Inventory, InventoryEntry, Source,
+                                             SourceStatus)
+    from polyscour.startup.manager import TargetState
+
+    def e(source, name, state="enabled"):
+        return InventoryEntry(source, name, f"mechanism of {name}",
+                              rf"C:\Vendor\{name}.exe", rf"C:\Vendor\{name}.exe",
+                              TargetState.PRESENT, "SYSTEM", state)
+
+    return Inventory(
+        entries=[e(Source.SCHEDULED_TASK, "Updater"), e(Source.SERVICE, "Agent")],
+        statuses=[SourceStatus(Source.STARTUP_FOLDER),
+                  SourceStatus(Source.RUN_ONCE, error="access denied"),
+                  SourceStatus(Source.SCHEDULED_TASK, listed=1,
+                               in_windows_folder=42),
+                  SourceStatus(Source.SERVICE, listed=1, in_windows_folder=83)])
+
+
+@pytest.fixture
+def startup_screen(app, monkeypatch):
+    from polyscour.views import startup_view
+
+    view = app.get_view("startup")
+    monkeypatch.setattr(startup_view, "list_items", lambda: [])
+    monkeypatch.setattr(startup_view, "read_inventory", _inventory_fixture)
+
+    def inline(work, done):
+        try:
+            result = work()
+        except Exception as exc:                            # noqa: BLE001
+            done(None, exc)
+        else:
+            done(result, None)
+
+    monkeypatch.setattr(app, "run_off_thread", inline)
+    return view
+
+
+def _texts(view):
+    def walk(w):
+        yield w
+        for c in w.winfo_children():
+            yield from walk(c)
+    return [w.cget("text") for w in walk(view.list)
+            if isinstance(w, ctk.CTkLabel)]
+
+
+def test_the_inventory_names_its_sources_and_what_it_left_out(startup_screen):
+    startup_screen.refresh()
+    text = "\n".join(_texts(startup_screen))
+    assert "Also starts with Windows — view only" in text
+    assert "Updater" in text and "Agent" in text
+    # Counted, not silently absent.
+    assert "42 others, whose programs are all inside the Windows folder, are not listed" in text
+    assert "83 others, whose programs are all inside the Windows folder, are not listed" in text
+
+
+def test_an_unread_source_says_so_and_is_not_shown_as_none_found(startup_screen):
+    startup_screen.refresh()
+    text = "\n".join(_texts(startup_screen))
+    assert "Could not read all of this: access denied" in text
+    # The source that WAS read and is empty says so; the unread one must not.
+    assert text.count("None found.") == 1
+
+
+def test_the_inventory_has_no_switch_and_no_advice(startup_screen):
+    startup_screen.refresh()
+    def walk(w):
+        yield w
+        for c in w.winfo_children():
+            yield from walk(c)
+    kinds = {type(w).__name__ for w in walk(startup_screen.list)}
+    assert "CTkSwitch" not in kinds and "CTkButton" not in kinds
+    text = "\n".join(_texts(startup_screen)).lower()
+    for word in ("recommend", "safe to", "should disable", "unnecessary", "bloat"):
+        # The one sentence that names the word does so to disclaim it.
+        assert word not in text.replace("nothing below is a recommendation", "")
+
+
+def test_a_failed_inventory_read_is_reported_not_left_as_loading(startup_screen,
+                                                                 monkeypatch):
+    from polyscour.views import startup_view
+
+    def boom():
+        raise RuntimeError("no luck")
+    monkeypatch.setattr(startup_view, "read_inventory", boom)
+    startup_screen.refresh()
+    text = "\n".join(_texts(startup_screen))
+    assert "Could not read these: no luck" in text
+    assert "Reading scheduled tasks" not in text
+
+
+def test_a_late_answer_for_a_rebuilt_list_is_dropped(startup_screen, app, monkeypatch):
+    """Refreshing twice while the first read is in flight must not paint the
+    section twice."""
+    pending = []
+    monkeypatch.setattr(app, "run_off_thread",
+                        lambda work, done: pending.append((work, done)))
+    startup_screen.refresh()
+    startup_screen.refresh()
+    assert len(pending) == 2
+    for work, done in pending:              # the stale one answers first
+        done(work(), None)
+    text = _texts(startup_screen)
+    assert text.count("Also starts with Windows — view only") == 1
+    assert sum("Updater" == t for t in text) == 1
+
+import types  # noqa: E402
+
+
+# ── Startup: one request per row, and the row tells the truth afterwards ─────
+
+class _Registry:
+    """A stand-in for the registry the list is read from, so a test can say
+    what is *true* independently of what a row remembers."""
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+
+    def items(self):
+        from polybedrock.startup import RunEntry
+
+        from polyscour.startup.manager import StartupItem, TargetState
+        entry = RunEntry(hive_name="HKLM_WOW6432", key_path="k",
+                         value_name="Mouse", raw_value=r"C:\m.exe",
+                         target_path=r"C:\m.exe", scope="machine")
+        return [StartupItem(entry=entry, enabled=self.enabled,
+                            has_approval_record=True, target=TargetState.PRESENT)]
+
+
+@pytest.fixture
+def machine_row(app, monkeypatch):
+    """The Startup view with one machine-wide row and a request we control.
+
+    ``pending`` collects (work, done) pairs instead of running them, which is
+    what an unanswered UAC prompt looks like from here.
+    """
+    from polyscour.views import startup_view
+
+    registry = _Registry(enabled=True)
+    view = app.get_view("startup")
+    monkeypatch.setattr(startup_view, "list_items", registry.items)
+    monkeypatch.setattr(startup_view, "read_inventory", _inventory_fixture)
+    pending, applied = [], []
+    monkeypatch.setattr(app, "run_off_thread",
+                        lambda work, done: pending.append((work, done)))
+
+    def fake_apply(item, enabled, ledger):
+        applied.append(enabled)
+        return types.SimpleNamespace(changed=True, reason="", elevated=True)
+    monkeypatch.setattr(startup_view.service, "apply_change", fake_apply)
+    view._pending.clear()
+    view.refresh()
+    pending.clear()                       # drop the inventory read
+    return view, registry, pending, applied
+
+
+def _walk(w):
+    yield w
+    for c in w.winfo_children():
+        yield from _walk(c)
+
+
+def _the_switch(view):
+    (switch,) = [w for w in _walk(view.list) if isinstance(w, ctk.CTkSwitch)]
+    return switch
+
+
+def _answer(pending, index, result=None, error=None):
+    work, done = pending[index]
+    done(result if result is not None else work(), error)
+
+
+def test_the_switch_is_locked_while_an_administrator_request_is_pending(machine_row):
+    view, _, pending, _ = machine_row
+    switch = _the_switch(view)
+    assert switch.cget("state") == "normal"          # the control
+    switch._variable.set(False)
+    view._toggle(_Registry().items()[0], switch._variable)
+    assert _the_switch(view).cget("state") == "disabled"
+    assert len(pending) == 1
+
+
+def test_a_second_click_while_pending_sends_nothing_and_changes_nothing(machine_row):
+    view, registry, pending, applied = machine_row
+    item = registry.items()[0]
+    var = _the_switch(view)._variable
+    var.set(False)
+    view._toggle(item, var)                          # the first click
+    var.set(True)                                    # the impatient second one
+    view._toggle(item, var)
+    assert len(pending) == 1, "a second request was started"
+    assert var.get() is True                         # back where the row was
+    _answer(pending, 0)
+    assert applied == [False], "only the first request may reach the service"
+
+
+def test_the_lock_is_released_when_the_answer_arrives(machine_row):
+    view, registry, pending, _ = machine_row
+    item = registry.items()[0]
+    var = _the_switch(view)._variable
+    var.set(False)
+    view._toggle(item, var)
+    registry.enabled = False                         # the helper wrote it
+    _answer(pending, 0)
+    assert view._pending == set()
+    assert _the_switch(view).cget("state") == "normal"
+    assert _the_switch(view)._variable.get() is False
+
+
+def test_the_lock_survives_a_refresh_that_happens_while_pending(machine_row):
+    """Another row's change (or the user leaving and returning) rebuilds the
+    list. The rebuilt row must still be locked."""
+    view, registry, pending, _ = machine_row
+    var = _the_switch(view)._variable
+    var.set(False)
+    view._toggle(registry.items()[0], var)
+    view.refresh()
+    assert _the_switch(view).cget("state") == "disabled"
+
+
+def test_a_refused_change_shows_what_the_registry_says_not_what_the_row_remembered(
+        machine_row):
+    """The reported bug: the registry said disabled while the switch said
+    enabled. A refusal must not leave the row on its old memory."""
+    view, registry, pending, _ = machine_row
+    item = registry.items()[0]                       # remembered: enabled
+    var = _the_switch(view)._variable
+    var.set(False)
+    view._toggle(item, var)
+    registry.enabled = False                         # it landed regardless
+    refused = types.SimpleNamespace(changed=False, reason="already in that state",
+                                    elevated=False)
+    _answer(pending, 0, result=refused)
+    assert _the_switch(view)._variable.get() is False
+    assert "already in that state" in view.status.cget("text")
+
+
+def test_a_failed_request_also_re_reads_the_registry_and_unlocks(machine_row):
+    view, registry, pending, _ = machine_row
+    var = _the_switch(view)._variable
+    var.set(False)
+    view._toggle(registry.items()[0], var)
+    registry.enabled = False
+    _answer(pending, 0, result=None, error=RuntimeError("helper crashed"))
+    assert view._pending == set()
+    assert _the_switch(view).cget("state") == "normal"
+    assert _the_switch(view)._variable.get() is False
+    assert "helper crashed" in view.status.cget("text")
+
+
+def test_a_user_entry_is_not_locked_or_left_pending(app, monkeypatch):
+    """The control: only requests that wait for a prompt need a lock."""
+    from polybedrock.startup import RunEntry
+
+    from polyscour.startup.manager import StartupItem, TargetState
+    from polyscour.views import startup_view
+
+    entry = RunEntry(hive_name="HKCU", key_path="k", value_name="Tool",
+                     raw_value=r"C:\t.exe", target_path=r"C:\t.exe", scope="user")
+    item = StartupItem(entry=entry, enabled=True, has_approval_record=True,
+                       target=TargetState.PRESENT)
+    view = app.get_view("startup")
+    monkeypatch.setattr(startup_view, "list_items", lambda: [item])
+    monkeypatch.setattr(startup_view, "read_inventory", _inventory_fixture)
+    monkeypatch.setattr(app, "run_off_thread", lambda work, done: None)
+    calls = []
+    monkeypatch.setattr(
+        startup_view.service, "apply_change",
+        lambda it, en, led: calls.append(en) or types.SimpleNamespace(
+            changed=True, reason="", elevated=False))
+    view._pending.clear()
+    view.refresh()
+    var = _the_switch(view)._variable
+    var.set(False)
+    view._toggle(item, var)
+    assert calls == [False] and view._pending == set()

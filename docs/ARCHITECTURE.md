@@ -339,6 +339,33 @@ Absence of an approval record means **enabled** — that is Windows' default, an
 most entries never get a record. Orphan records (an approval naming a `Run`
 value that no longer exists) are excluded: they are not startup items, and
 listing them would offer a switch that governs nothing.
+
+### The view-only inventory (ADR 0011)
+
+`startup/inventory.py` lists the rest of what starts with Windows — Startup
+folders, `RunOnce` keys, scheduled tasks with a logon or boot trigger, and
+automatic Win32 services — and has **no writer and no switch**. It is a peer of
+`manager.py`, not part of the chain above: it imports only `TargetState` from
+it, and nothing in `policy`/`service` knows it exists.
+
+```
+read_inventory()  ->  one reader per source, each returning (entries, status)
+   folders   os.listdir + StartupApproved\StartupFolder byte
+   RunOnce   winreg
+   tasks     schtasks.exe /query /xml ONE  (absolute path, shell=False)
+   services  HKLM\SYSTEM\CurrentControlSet\Services (+ Parameters\ServiceDll)
+```
+
+Threading: `startup_view` calls it through `app.run_off_thread`, because one
+source is a subprocess. A generation counter drops an answer that arrives after
+the list was rebuilt. Each source carries its own `SourceStatus`, so a failure
+marks only that source *unread* — which the screen words differently from
+*none found* — and never blanks the others.
+
+Tasks and services whose programs all live inside the Windows folder are
+counted, not listed (a location, not a verdict; ADR 0011 Decision 3). Anything
+unreadable stays in the list.
+
 ## Two lifetimes: resource and data
 
     RESOURCE   ships with the build, read-only, may sit in a temporary
@@ -557,9 +584,23 @@ against what the entry launches now, writes, and **reads back** — because
 `SetValueEx` returning without error is not evidence the value is what was
 asked for.
 
+Which approval key governs an entry is decided by `manager.approval_key(hive)`:
+`StartupApproved\Run` for `HKCU` and `HKLM`, and `StartupApproved\Run32` for the
+32-bit machine-wide key (`HKLM_WOW6432`). The elevated request carries the same
+fact as a `wow6432` boolean derived from the entry, and the helper maps it onto
+one of two compiled-in (Run, approval) pairs — the caller cannot name a key
+(T13).
+
 `startup_view` runs an elevated toggle through `run_off_thread`. The UAC prompt
 is modal to the desktop rather than to us, so doing it inline freezes the window
 behind the dialog and Windows paints it as "not responding".
+
+While a request is in flight its row's switch is **locked** and its identity is
+held in a pending set, so a second click cannot race the first (on a real
+machine it did: judged against the row's old state it read "already in that
+state" and snapped the switch to a position the registry did not have). When
+the answer arrives — success, refusal or error alike — the list is **re-read
+from the registry** rather than patched from what the row remembered.
 ## Threading
 
 Tk is not thread-safe. One rule covers it:

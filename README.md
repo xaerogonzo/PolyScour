@@ -28,6 +28,12 @@ This list is part of the product, not a disclaimer.
   Manager uses — and only when you flip it. Every such change names the key
   and value, is recorded in History, and is undoable. Registry *cleaning* —
   deleting keys because they look unused — is not in 0.1 and is not planned.
+  The Startup screen also *lists* Startup folders, `RunOnce` keys, scheduled
+  tasks that start at logon or boot, and automatic services — view only, with
+  no switch, because changing those is a different mechanism this project has
+  not made a decision about. Ones whose programs all live in the Windows folder
+  are counted, not listed; a source that could not be read says so instead of
+  showing "none".
 - **No telemetry.** Not opt-in, not anonymous, not "just crash reports". None.
 - **No account, no cloud, no ads, no bundled software.**
 - **No claiming an undo that does not exist.** A regenerable cache is deleted
