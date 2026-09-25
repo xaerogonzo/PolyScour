@@ -398,6 +398,43 @@ def startup_inventory(session):
         startup_view.read_inventory = real_inventory
 
 
+@scene("startup-waiting")
+def startup_waiting(session):
+    """A machine-wide row waiting on the Windows prompt: locked, says so, and
+    offers Cancel. The state a hidden UAC prompt leaves a person in."""
+    import threading
+
+    from polybedrock.startup import RunEntry
+
+    from polyscour.startup.manager import StartupItem, TargetState
+    from polyscour.views import startup_view
+
+    def item(name, hive, scope, key):
+        return StartupItem(
+            entry=RunEntry(hive_name=hive, key_path=key, value_name=name,
+                           raw_value=rf"C:\{name}.exe",
+                           target_path=rf"C:\{name}.exe", scope=scope),
+            enabled=True, has_approval_record=True, target=TargetState.PRESENT)
+
+    run = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+    user = item("OneDrive", "HKCU", "user", run)
+    mouse = item("Gaming Mouse", "HKLM_WOW6432", "machine",
+                 r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run")
+    real, real_inventory = startup_view.list_items, startup_view.read_inventory
+    startup_view.list_items = lambda: [user, mouse]
+    startup_view.read_inventory = _startup_inventory_fixture
+    try:
+        view = session.mount(startup_view.StartupView, app=_app())
+        view._pending.add(mouse.identity)
+        view._cancels[mouse.identity] = threading.Event()
+        view.refresh()
+        view._lock(mouse.identity, True)
+        session.shot("startup_waiting")
+    finally:
+        startup_view.list_items = real
+        startup_view.read_inventory = real_inventory
+
+
 def _storage_fixture():
     """``(volume, other_volumes, report)`` -- a scan that looks like a real disk.
 

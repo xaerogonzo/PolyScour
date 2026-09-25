@@ -145,7 +145,7 @@ def handle(request: Request, control: "_Control | None" = None) -> Response:
         if request.operation is Operation.DELETE_APPROVED_PATHS_FOR_RULE:
             return _delete_approved_paths_for_rule(request.params, control)
         if request.operation is Operation.SET_MACHINE_STARTUP_APPROVAL:
-            return _set_machine_startup_approval(request.params)
+            return _set_machine_startup_approval(request.params, control)
     except Exception as exc:                      # pragma: no cover - belt
         # An unexpected failure at full privilege must not surface as a
         # traceback on stdout that a caller might parse as success.
@@ -356,7 +356,8 @@ def _delete_approved_paths_for_rule(params: dict, control: _Control) -> Response
         "stopped": stopped,
     })
 
-def _set_machine_startup_approval(params: dict) -> Response:
+def _set_machine_startup_approval(params: dict,
+                                  control: "_Control | None" = None) -> Response:
     """Flip one HKLM StartupApproved byte, having re-checked everything.
 
     The validation order matters and is the specification, not an accident:
@@ -369,9 +370,23 @@ def _set_machine_startup_approval(params: dict) -> Response:
     orphan records that already litter real machines, and doing it at
     administrator privilege on a caller-supplied name would let a compromised
     GUI write arbitrary value names into a machine-wide key.
+
+    **A cancelled request is refused, before anything is read or written.** The
+    user may cancel while the UAC prompt is still showing -- behind another
+    window, say -- and answer it later. The prompt cannot be dismissed from
+    here, so the helper that eventually starts must find the cancel sentinel
+    and do nothing; otherwise "cancelled" would be a lie told about a change
+    that then happens. It can only cause a refusal, so it narrows and never
+    widens what this operation may do.
     """
     from polyscour.startup.manager import _approval_blob
     from polyscour.startup.policy import is_own_entry
+
+    control = control or _Control()
+    if control.cancelled():
+        return Response(False,
+                        "cancelled before it started, so nothing was changed",
+                        "policy")
 
     value_name = params["value_name"]
     enabled = params["enabled"]
@@ -412,6 +427,13 @@ def _set_machine_startup_approval(params: dict) -> Response:
             "what this entry launches has changed since PolyScour looked at "
             "it, so it has been left alone",
             "policy")
+
+    # Once more, immediately before the write: everything above is a few
+    # registry reads, but this is the last point at which a cancel is honoured.
+    if control.cancelled():
+        return Response(False,
+                        "cancelled before it started, so nothing was changed",
+                        "policy")
 
     try:
         with winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, approved_key) as key:

@@ -96,6 +96,49 @@ def request(operation: Operation, cancel: "threading.Event | None" = None,
 
 
 def _run(req: Request, tmp: Path, cancel: "threading.Event | None") -> Response:
+    stop_watching = _watch_for_cancel(cancel, tmp / "cancel")
+    try:
+        return _run_helper(req, tmp, cancel)
+    finally:
+        stop_watching()
+
+
+def _watch_for_cancel(cancel: "threading.Event | None", cancel_path: Path):
+    """Write the cancel sentinel the moment ``cancel`` is set. Returns a stopper.
+
+    Needed because ``_launch`` **blocks for as long as the UAC prompt is
+    showing**, and the wait loop below only starts once it returns -- so a
+    cancel raised while the prompt is still up would otherwise not be written
+    until the user had already answered it, by which time the helper is running.
+    Written from its own thread, the sentinel exists before a late "Yes" starts
+    the helper, and the helper refuses (``helper._set_machine_startup_approval``).
+    The window that remains is a cancel and a "Yes" inside one poll interval.
+    """
+    if cancel is None:
+        return lambda: None
+    stop = threading.Event()
+
+    def watch():
+        while not stop.is_set():
+            if cancel.wait(_POLL_S):
+                try:
+                    cancel_path.write_text("1", encoding="utf-8")
+                except OSError:
+                    pass          # best effort, as the loop below is
+                return
+
+    thread = threading.Thread(target=watch, name="polyscour-cancel-watch",
+                              daemon=True)
+    thread.start()
+
+    def stopper():
+        stop.set()
+        thread.join(timeout=1.0)
+
+    return stopper
+
+
+def _run_helper(req: Request, tmp: Path, cancel: "threading.Event | None") -> Response:
     request_path = tmp / "request.json"
     response_path = request_path.with_suffix(".json.response")
     progress_path = tmp / "progress"

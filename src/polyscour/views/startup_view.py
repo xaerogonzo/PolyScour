@@ -25,6 +25,8 @@ Nothing is pre-selected and nothing is recommended, at either privilege.
 """
 from __future__ import annotations
 
+import threading
+
 import customtkinter as ctk
 from polybedrock.ui import theme
 
@@ -42,6 +44,14 @@ _SECTIONS = [
     (Source.SCHEDULED_TASK, "Scheduled tasks that start at logon or boot"),
     (Source.SERVICE, "Services set to start automatically"),
 ]
+
+
+#: One line, deliberately: a wrapped label in this row is squashed, not grown.
+_WAITING_ROW = ("Waiting for the Windows administrator prompt "
+                "(check behind other windows and the taskbar)")
+_WAITING_STATUS = "waiting for administrator rights…"
+_CANCELLING_STATUS = ("Cancelling. If the Windows prompt is answered later, "
+                      "nothing will be changed.")
 
 
 class StartupView(ctk.CTkFrame):
@@ -86,6 +96,10 @@ class StartupView(ctk.CTkFrame):
         #: switch drawn for each row, so a row can be locked and unlocked.
         self._pending: set[str] = set()
         self._switches: dict = {}
+        #: One cancel Event per pending request, and the row parts that show
+        #: the wait: (detail label, its normal text, cancel button).
+        self._cancels: dict = {}
+        self._waiting_parts: dict = {}
 
     def on_show(self) -> None:
         self.refresh()
@@ -94,6 +108,7 @@ class StartupView(ctk.CTkFrame):
         for child in self.list.winfo_children():
             child.destroy()
         self._switches = {}
+        self._waiting_parts = {}
 
         try:
             items = list_items()
@@ -234,14 +249,28 @@ class StartupView(ctk.CTkFrame):
             detail = f"{detail}  ·  {refusal}"
         elif cost:
             detail = f"{detail}  ·  {cost}"
-        ctk.CTkLabel(row, text=detail, anchor="w", font=theme.get("small"),
-                     text_color=theme.color("subtext")
-                     ).grid(row=1, column=1, sticky="ew")
+        detail_label = ctk.CTkLabel(
+            row, text=detail, anchor="w", font=theme.get("small"),
+            text_color=theme.color("subtext"))
+        detail_label.grid(row=1, column=1, sticky="ew")
 
         scope = f"{it.scope}  ·  admin" if cost and not refusal else it.scope
         ctk.CTkLabel(row, text=scope, anchor="e", font=theme.get("small"),
                      text_color=theme.color("subtext")
                      ).grid(row=0, column=2, rowspan=2, padx=6)
+
+        # Only a row that waits on a Windows prompt can be cancelled. Built for
+        # every such row and shown only while a request is pending, so a rebuilt
+        # list still shows the wait and its way out.
+        cancel_button = None
+        if cost and not refusal:
+            cancel_button = ctk.CTkButton(
+                row, text="Cancel", width=80, height=24,
+                command=lambda ident=it.identity: self._cancel(ident))
+            cancel_button.grid(row=0, column=3, rowspan=2, padx=(0, 6))
+            cancel_button.grid_remove()
+        self._waiting_parts[it.identity] = (detail_label, detail, cancel_button)
+        self._show_waiting(it.identity, it.identity in self._pending)
 
     def _toggle(self, it, var) -> None:
         if it.identity in self._pending:
@@ -267,13 +296,56 @@ class StartupView(ctk.CTkFrame):
         # switch is left where the user put it and *locked* until the answer
         # arrives, so the screen never shows a state nobody has agreed to yet
         # and a second click cannot race the first.
+        #
+        # The prompt can be hidden behind other windows or only blink in the
+        # taskbar, and Windows lets it sit for minutes. So the row says what it
+        # is waiting for and offers a Cancel; see ``_cancel`` for what that
+        # does and does not promise.
+        cancel = threading.Event()
+        self._cancels[it.identity] = cancel
         self._pending.add(it.identity)
         self._lock(it.identity, True)
-        self.status.configure(
-            text=f"{it.name}: waiting for administrator rights…")
+        self._show_waiting(it.identity, True)
+        self.status.configure(text=f"{it.name}: {_WAITING_STATUS}")
         self.app.run_off_thread(
-            lambda: service.apply_change(it, wanted, ledger),
+            lambda: service.apply_change(it, wanted, ledger, cancel),
             lambda result, error: self._toggled(it, wanted, result, error))
+
+    def _show_waiting(self, identity: str, waiting: bool) -> None:
+        parts = self._waiting_parts.get(identity)
+        if parts is None:
+            return
+        label, normal, button = parts
+        label.configure(text=_WAITING_ROW if waiting else normal)
+        if button is None:
+            return
+        if waiting:
+            cancelled = self._cancels.get(identity)
+            button.configure(
+                text="Cancelling…" if cancelled is not None and cancelled.is_set()
+                else "Cancel",
+                state="disabled" if cancelled is not None and cancelled.is_set()
+                else "normal")
+            button.grid()
+        else:
+            button.grid_remove()
+
+    def _cancel(self, identity: str) -> None:
+        """Ask for the pending change not to happen.
+
+        What this promises, exactly: if Windows' prompt is answered *after* this,
+        the helper finds the cancel sentinel and changes nothing, and the row's
+        History entry is closed as not done. What it cannot do is dismiss the
+        prompt itself -- that belongs to Windows -- so an unanswered prompt stays
+        on screen and the row stays locked until it is answered or Windows drops
+        it. A change the helper had already made is reported as made.
+        """
+        cancel = self._cancels.get(identity)
+        if cancel is None:
+            return
+        cancel.set()
+        self._show_waiting(identity, True)
+        self.status.configure(text=_CANCELLING_STATUS)
 
     def _lock(self, identity: str, locked: bool) -> None:
         switch = self._switches.get(identity)
@@ -282,6 +354,7 @@ class StartupView(ctk.CTkFrame):
 
     def _toggled(self, it, wanted, result, error) -> None:
         self._pending.discard(it.identity)
+        self._cancels.pop(it.identity, None)
         # Whatever happened, the list is re-read from the registry rather than
         # patched from what this row remembered. A refusal does not mean the
         # switch is where it started (an earlier request may have landed), and

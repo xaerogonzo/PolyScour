@@ -225,6 +225,12 @@ switch and a stated cost: changing one affects every account, so it asks for
 administrator rights. The row says so before you touch it, rather than
 explaining afterwards.
 
+While Windows' prompt is waiting, the row is locked and says what it is waiting
+for, because that prompt can sit behind other windows or only blink in the
+taskbar. **Cancel** on the row means the change will not be made even if the
+prompt is answered later. It cannot dismiss Windows' prompt itself, so the row
+stays locked until that prompt is answered or Windows drops it.
+
 This is a real trade. Machine-wide autoruns being refused outright was a
 limit on the damage this screen could do — most security software registers
 there — and that limit is gone. What is left is that nothing is pre-selected,
