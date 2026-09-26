@@ -24,7 +24,7 @@ from __future__ import annotations
 
 #: The authority is ``pyproject.toml``. This is the value a frozen build falls
 #: back to, and a test asserts the two are equal -- see the module docstring.
-_FALLBACK_VERSION = "0.2.0"
+_FALLBACK_VERSION = "0.3.0"
 
 
 def _detect_version() -> str:

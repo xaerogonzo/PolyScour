@@ -50,7 +50,7 @@
 ; it equals pyproject.toml's version -- four unlinked version numbers is the
 ; bug this replaced.
 #ifndef AppVersion
-  #define AppVersion   "0.2.0"
+  #define AppVersion   "0.3.0"
 #endif
 #define AppPublisher   "Alexander L Corthell"
 #define AppExeName     "PolyScour.exe"

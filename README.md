@@ -3,7 +3,7 @@
 > A transparent, evidence-based Windows maintenance suite. Free, local, and
 > willing to tell you what it does not know.
 
-![Status](https://img.shields.io/badge/status-0.2%20development-orange)
+![Status](https://img.shields.io/badge/status-0.3%20development-orange)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11%2B-green)
 ![Licence](https://img.shields.io/badge/licence-MIT-blue)
