@@ -28,9 +28,11 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from polyscour.cleaning import recyclebin
 from polyscour.contracts import (
     ActionPlan,
     ActionResult,
+    OperationOutcome,
     Reversal,
     ElevationRecord,
     Skip,
@@ -129,6 +131,21 @@ class Executor:
         for finding in plan.findings:
             if cancel.is_set():
                 break
+
+            if finding.rule_id == recyclebin.RULE_ID:
+                # Never authorised through the guard: there is no path here for
+                # `safety/policy.py` to grant a rule against, and the Shell API
+                # is the authority on this volume's own Recycle Bin.
+                info = recyclebin.query(str(finding.path))
+                if info is None or info.empty:
+                    skips.append(Skip(finding.path, SkipReason.VANISHED,
+                                      "already empty, or could not be queried",
+                                      finding.rule_id))
+                    continue
+                completed += 1
+                bytes_ += info.bytes
+                continue
+
             try:
                 self._authorise(finding)
             except GuardRefusal as exc:
@@ -159,10 +176,20 @@ class Executor:
         skips: list[Skip] = []
         reversals: list[Reversal] = []
         vaulted: list[VaultedItem] = []
+        #: Volumes the Shell reported success on but a re-query afterward
+        #: still found something in. Drives the SUCCESS_WITH_UNEXPECTED_REMAINDER
+        #: upgrade below -- there is no single failed item to blame, only the
+        #: Recycle Bin's own before/after figures.
+        recycle_bin_remainder: list[tuple[str, int, int]] = []
 
         for finding in plan.findings:
             if cancel.is_set():
                 break
+
+            if finding.rule_id == recyclebin.RULE_ID:
+                completed, bytes_ = self._perform_recycle_bin(
+                    finding, skips, recycle_bin_remainder, completed, bytes_)
+                continue
 
             try:
                 approved = self._authorise(finding)
@@ -209,13 +236,61 @@ class Executor:
         if vaulted:
             self.vault.write_manifest(operation_id, vaulted)
 
+        outcome = classify(len(plan.findings), completed, skips, cancel.is_set())
+        # A Recycle Bin the Shell reported success on but that a re-query still
+        # found something in gets its own outcome rather than being folded into
+        # SUCCESS_WITH_SKIPS -- there is no single failed item behind it, only
+        # the bin's own before/after figures, and that is a materially
+        # different thing to tell a user than "some items were skipped".
+        if recycle_bin_remainder and outcome in (
+                OperationOutcome.SUCCESS, OperationOutcome.SUCCESS_WITH_SKIPS):
+            outcome = OperationOutcome.SUCCESS_WITH_UNEXPECTED_REMAINDER
+
         return ActionResult(
             operation_id=operation_id,
-            outcome=classify(len(plan.findings), completed, skips, cancel.is_set()),
+            outcome=outcome,
             started_at=started, finished_at=datetime.now(timezone.utc),
             bytes_freed=bytes_, items_completed=completed,
             skips=skips, reversals=reversals, dry_run=False,
             elevation=elevation)
+
+    def _perform_recycle_bin(self, finding, skips: list[Skip],
+                             recycle_bin_remainder: list[tuple[str, int, int]],
+                             completed: int, bytes_: int) -> tuple[int, int]:
+        """Empty one volume's Recycle Bin and verify it actually emptied.
+
+        Never authorised through the guard -- there is no glob-scanned path
+        here for ``safety/policy.py`` to grant a rule against, and the Shell
+        API is the authority on this volume's own Recycle Bin, not a
+        ``RootFamily``. See ``cleaning/recyclebin.py`` and docs/adr/0012.
+        """
+        volume = str(finding.path)
+        before = recyclebin.query(volume)
+        if before is None or before.empty:
+            skips.append(Skip(finding.path, SkipReason.VANISHED,
+                              "already empty, or could not be queried",
+                              finding.rule_id))
+            return completed, bytes_
+
+        if not recyclebin.empty(volume):
+            skips.append(Skip(finding.path, SkipReason.ERROR,
+                              "the Shell reported it could not empty this "
+                              "Recycle Bin", finding.rule_id))
+            return completed, bytes_
+
+        after = recyclebin.query(volume)
+        freed = before.bytes - (after.bytes if after else 0)
+        completed += 1
+        bytes_ += max(0, freed)
+
+        if after is not None and not after.empty:
+            recycle_bin_remainder.append((volume, after.items, after.bytes))
+            skips.append(Skip(
+                finding.path, SkipReason.LOCKED,
+                f"{after.items:,} item(s), {after.bytes:,} bytes remained "
+                f"after emptying -- likely in use", finding.rule_id))
+
+        return completed, bytes_
 
     def _elevated_pass(self, skips: list[Skip], completed: int, bytes_: int,
                        cancel: threading.Event

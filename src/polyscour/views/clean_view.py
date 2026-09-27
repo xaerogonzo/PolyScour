@@ -23,7 +23,7 @@ import customtkinter as ctk
 from polybedrock import settings as cfg
 from polybedrock.ui import theme
 
-from polyscour.cleaning import planner
+from polyscour.cleaning import planner, recyclebin
 from polyscour.cleaning.executor import Executor
 from polyscour.contracts import RiskLevel, SkipReason
 from polyscour.formatting import human
@@ -187,11 +187,22 @@ class CleanView(ctk.CTkFrame):
         self.summary.configure(text="Scanning…")
         self.app.set_status("Scanning")
 
+        self.app.run_off_thread(self._scan_including_recycle_bin, self._scanned)
+
+    def _scan_including_recycle_bin(self):
+        """The JSON-rule scan, plus the Recycle Bin's own Shell-API scan.
+
+        Kept as two calls merged here rather than folded into ``Scanner.scan``
+        itself: the Recycle Bin has no glob-scanned path for the guard to
+        authorise and isn't a JSON rule at all (``cleaning/recyclebin.py``), so
+        it does not belong inside the loop that walks ``rules``.
+        """
         rules = self.app.services.enabled_rules()
-        self.app.run_off_thread(
-            lambda: self.app.services.scanner.scan(
-                rules, self._cancel, on_progress=self._progress),
-            self._scanned)
+        result = self.app.services.scanner.scan(
+            rules, self._cancel, on_progress=self._progress)
+        if not self._cancel.is_set():
+            result.outcomes.append(recyclebin.scan())
+        return result
 
     def _progress(self, rule_id: str, walked: int) -> None:
         """Called from the scanning thread; Tk is touched only on its own."""

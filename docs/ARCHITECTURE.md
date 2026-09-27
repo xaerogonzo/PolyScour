@@ -18,6 +18,12 @@ DISCOVER ─ ANALYZE ─ PRESENT ─ PLAN ─ CONFIRM ─ EXECUTE ─ VERIFY ─
 - **`executor.py`** is the only code in PolyScour that removes anything.
 - **`ledger.py`** records every operation, including dry runs, labelled as
   rehearsals.
+- **`recyclebin.py`** is the one findings source that skips DISCOVER's usual
+  glob walk and EXECUTE's usual guard call — it asks the Shell API
+  (`SHQueryRecycleBinW`/`SHEmptyRecycleBinW`) rather than walking
+  `$Recycle.Bin\<SID>` as a directory, because the Shell, not the filesystem,
+  is the authority on what is in a Recycle Bin. `executor.py` recognises its
+  rule id before the generic per-`Finding` path runs. See `docs/adr/0012`.
 
 ## Layers
 
