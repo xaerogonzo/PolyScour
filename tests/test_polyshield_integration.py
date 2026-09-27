@@ -94,17 +94,27 @@ def test_no_token_means_no_conversation(monkeypatch):
     assert called == []
 
 
-def test_intel_freshness_is_none_when_absent():
-    assert polyshield.intel_freshness() is None
-
-
 # ══ PolyShield present ════════════════════════════════════════════════════════
+#
+# Reply shapes below are copied from PolyShield's own handlers
+# (`polyshield_service.py`, `_build_status`/`_build_intel_status`), not
+# guessed -- notably, GET_INTEL_STATUS has no `age_days` field; its real shape
+# is a `feeds` mapping with PolyShield's own per-feed freshness state.
 
 def test_a_running_polyshield_answers(monkeypatch, with_token):
     svc = FakeService({
         "PING": {"ok": True},
-        "STATUS": {"ok": True, "watcher_running": True},
-        "GET_INTEL_STATUS": {"ok": True, "age_days": 2},
+        "STATUS": {"ok": True, "watcher_running": True,
+                  "process_monitor_running": True},
+        "GET_INTEL_STATUS": {
+            "ok": True, "updater_running": True, "running_now": False,
+            "feeds": {
+                "malware_hashes": {"enabled": True, "state": "fresh"},
+                "yara_rules": {"enabled": True, "state": "stale"},
+                "ip_blocklist": {"enabled": False, "state": "never"},
+            },
+            "last_result": {},
+        },
     })
     monkeypatch.setattr(polyshield, "_PORT", svc.port)
     try:
@@ -112,7 +122,30 @@ def test_a_running_polyshield_answers(monkeypatch, with_token):
         posture = polyshield.security_posture()
         assert posture.available is True
         assert posture.watcher_running is True
-        assert posture.intel_age_days == 2
+        assert posture.process_monitor_running is True
+        # Only enabled feeds count, and only PolyShield's own "needs
+        # attention" states -- "never" on a disabled feed is neither.
+        assert posture.intel_feeds_enabled == 2
+        assert posture.intel_feeds_stale_or_error == 1
+    finally:
+        svc.close()
+
+
+def test_an_unreadable_feed_list_is_unknown_not_zero(monkeypatch, with_token):
+    """GET_INTEL_STATUS failing internally (`_build_intel_status`'s except
+    path) returns `{"ok": False, ...}` with no `feeds` key at all. That must
+    read as 'we don't know', never as 'zero feeds enabled' -- those are
+    different facts."""
+    svc = FakeService({
+        "PING": {"ok": True},
+        "STATUS": {"ok": True, "watcher_running": True},
+        "GET_INTEL_STATUS": {"ok": False, "error": "boom"},
+    })
+    monkeypatch.setattr(polyshield, "_PORT", svc.port)
+    try:
+        posture = polyshield.security_posture()
+        assert posture.intel_feeds_enabled is None
+        assert posture.intel_feeds_stale_or_error is None
     finally:
         svc.close()
 
@@ -133,13 +166,12 @@ def test_the_client_only_ever_asks_questions(monkeypatch, with_token):
     svc = FakeService({
         "PING": {"ok": True},
         "STATUS": {"ok": True, "watcher_running": True},
-        "GET_INTEL_STATUS": {"ok": True, "age_days": 1},
+        "GET_INTEL_STATUS": {"ok": True, "feeds": {}},
     })
     monkeypatch.setattr(polyshield, "_PORT", svc.port)
     try:
         polyshield.is_available()
         polyshield.security_posture()
-        polyshield.intel_freshness()
     finally:
         svc.close()
 

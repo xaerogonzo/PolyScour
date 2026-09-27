@@ -401,15 +401,17 @@ something.
 ## Optional: PolyShield
 
 If [PolyShield](https://github.com/xaerogonzo/Polyshield-Antivirus) is installed
-and running, the dashboard gains one tile showing real security posture and
-threat-intelligence freshness.
+and running, the dashboard gains one tile: real-time protection, process
+monitoring, and how many of PolyShield's enabled threat-intelligence feeds
+need attention — using PolyShield's own freshness classification, not a number
+PolyScour computed itself.
 
 If it is not, the tile simply does not appear. No greyed-out teaser, no
 advertisement. PolyScour is a complete application on its own, and an
 integration test asserts it behaves identically whether PolyShield is absent,
 present, or installed-but-crashed.
 
-The integration asks exactly three questions — `PING`, `STATUS`,
+The integration asks exactly two questions — `PING`, and `STATUS` followed by
 `GET_INTEL_STATUS` — over an authenticated local socket, and **fails closed**.
 There is no code path from PolyScour that asks PolyShield to *do* anything.
 

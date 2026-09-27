@@ -107,7 +107,9 @@ def test_the_polyshield_tile_is_absent_when_polyshield_is(app):
     dashboard = app.get_view("dashboard")
     dashboard._render_polyshield(
         type("P", (), {"available": False, "watcher_running": None,
-                       "intel_age_days": None})())
+                       "process_monitor_running": None,
+                       "intel_feeds_enabled": None,
+                       "intel_feeds_stale_or_error": None})())
     assert not dashboard.polyshield.winfo_ismapped()
 
 
