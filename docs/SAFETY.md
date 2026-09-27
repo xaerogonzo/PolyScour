@@ -374,6 +374,49 @@ The write is then **read back**. `SetValueEx` returning without error is not
 evidence the value is what was asked for, and "verify rather than assume" is
 what the cleaning path already does when it re-scans afterwards.
 
+## 11. Scheduled cleaning: consent that has to keep meaning the same thing
+
+Every policy above assumes a person is present to authorise a single action.
+A schedule authorises an unbounded number of future, unattended ones from one
+moment of consent, which is a different problem: not *may this be touched*,
+but *does this still mean what was agreed to*. `scheduling/consent.py` is the
+authority for that question, checked fresh before every run by
+`scheduling/runner.py` — never assumed to still hold from creation.
+
+**A rule id is not a stable description of what will happen; a hash of its
+content is.** Each `Schedule` stores a canonical SHA-256 digest of every
+rule's JSON at consent time. A rule whose current digest no longer matches is
+refused on its own, not the whole schedule — the same "detection and
+diagnosis stay separate from the decision" shape as everywhere else in this
+codebase, applied to "has this changed" rather than "may this be touched".
+`docs/adr/0014` has the full reasoning; `docs/THREAT_MODEL.md` T28 has the
+threat.
+
+**A digest cannot see a change to the policy behind an unchanged rule.**
+`safety.policy.POLICY_VERSION` closes that gap: one integer, bumped only for
+a change that could widen what an existing rule id may touch. A schedule
+whose recorded version has been passed is refused **as a whole** — this is
+not a per-rule fact, so it does not get a per-rule refusal. T29.
+
+**Elevation is not read from the schedule; it is absent from the code that
+runs it.** `scheduling/runner.py` never passes `allow_elevation=True` to
+`Executor`, regardless of anything `Schedule.elevation_allowed` claims, and
+`scheduling/consent.eligible_rule_ids()` excludes every `requires_elevation`
+rule before a schedule can ever be created for it. T30.
+
+**Disabling acts at two levels, and never retroactively.**
+`scheduling/service.set_enabled()` disables the Task Scheduler task itself
+and the stored flag `runner.py` checks first; either surviving alone still
+stops the next run. An operation already in progress follows its own
+cancellation semantics, unaffected by a disable that happens mid-run. T30.
+
+**The delivery mechanism is verified, not merely trusted.**
+`scheduling/task.verify()` confirms the *live* Task Scheduler task still
+points at the program PolyScour installed, with the arguments PolyScour gave
+it, unelevated and interactive-only, before a single rule is scanned — an
+integrity check, not a privilege boundary, since the task carries no more
+authority than the logged-in user already has either way.
+
 ## What is tested
 
 `tests/test_safety.py` and `tests/test_executor.py`, in full:

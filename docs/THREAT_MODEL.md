@@ -985,6 +985,116 @@ Residuals, stated:
 - **A new tool** is a new experiment. Nothing here generalises from one tool to
   the next, and the checklist in `docs/CLEANING_RULES.md` asks for it.
 
+## Scheduled cleaning
+
+The first feature that mutates the machine with nobody watching a
+confirmation dialog. Every earlier invariant in this document assumes a
+person at the keyboard; this section exists because that assumption is the
+one being relaxed, deliberately, once, at schedule-creation time
+(`docs/adr/0014`).
+
+### T28 — A rule's definition changes after a schedule already consented to it
+
+**What could go wrong.** A schedule stores rule ids and runs whatever those
+ids currently mean. If a rule's JSON is edited later — a shipped update
+widens `chrome-cache`'s patterns, say — an existing schedule would silently
+start doing something nobody at creation time agreed to. This is exactly the
+"configuration is not authority" problem `safety/policy.py` states for a
+single rule file, reappearing at the level of *consent that outlives the
+moment it was given*.
+
+**Mitigations.**
+- Each `Schedule` stores a canonical SHA-256 digest of every rule it covers,
+  taken at creation (`scheduling/consent.py::canonical_rule_digest`).
+  Canonical means sorted keys and no incidental whitespace, so a purely
+  cosmetic edit to the rule file does not force a needless re-consent, while
+  any change to what the rule actually says does.
+- Before every unattended run, `scheduling/runner.py` recomputes each
+  consented rule's current digest and compares it to what was stored. A
+  mismatch refuses **that rule only** — a three-rule schedule with one changed
+  definition still runs the other two.
+- A rule that no longer exists, or no longer validates against its
+  `PolicyEntry`, is refused the same way a changed digest is: there is no
+  meaningful difference between "the definition changed" and "the definition
+  is gone" from the schedule's point of view.
+
+**What is not covered.** A schedule's own stored data (`schedules.json`)
+being hand-edited by the same logged-in user is not a threat this defends
+against — it is the same trust boundary as hand-editing `settings.json`
+today, not a new attack surface this feature introduces. Editing both a
+schedule's `rule_ids` and its `rule_definition_hashes` together to point at a
+different, currently-valid rule succeeds, because that is simply choosing a
+different rule to schedule with the same account's own authority — the same
+as creating a new schedule for it through the UI would.
+
+### T29 — The safety policy itself changes, not just a rule file
+
+**What could go wrong.** T28 catches a changed rule file. It cannot catch a
+change to `safety/policy.py` itself — a new `RootFamily`, a loosened ceiling,
+an added `Operation` — that widens what an *unchanged*, already-consented
+rule id is permitted to touch. A rule's own JSON digest would not move; only
+the authority behind it would.
+
+**Mitigations.**
+- `safety.policy.POLICY_VERSION` is a single integer, incremented **only**
+  for a change that could widen an existing rule id's reach. A schedule
+  records the version current at its creation, and `scheduling/consent.py`
+  refuses the **whole schedule** — not a per-rule refusal, since the change is
+  not about any one rule — if the running version has since moved past it.
+- A strictly narrowing policy change (a new denylist entry, a tightened
+  ceiling, a stricter `min_age_days` floor) does not need to increment the
+  version at all: it can only make a scheduled run do less than was
+  consented to, never more, the same reasoning that already lets an
+  exclusion be accepted from an untrusted caller elsewhere in this codebase.
+
+**What is not covered.** This is a discipline a reviewer has to apply
+correctly when writing the change, not a property the type system enforces —
+forgetting to bump `POLICY_VERSION` for a genuinely widening change is a
+review failure this mechanism cannot itself catch. `docs/CLEANING_RULES.md`
+and the module docstring both state the rule as a checklist item.
+
+### T30 — A scheduled run elevates, or a disabled schedule keeps firing
+
+**What could go wrong.** Two separate failures with the same shape: a
+schedule quietly gaining a capability nobody granted it. Either a scheduled
+run requests administrator rights unattended (no one is present to see or
+answer a UAC prompt, so a prompt appearing at 3 a.m. is not "asking" in any
+meaningful sense), or a schedule someone disabled keeps running anyway.
+
+**Mitigations, elevation.**
+- `scheduling/runner.py` constructs `Executor` with its default
+  `allow_elevation=False` and there is no code path in that function that
+  could set it otherwise — not from `Schedule.elevation_allowed` (recorded on
+  the schedule for the record and the UI, never read for this decision), not
+  from anything else the schedule claims. This is stronger than "checked and
+  refused": elevation for a scheduled run is not a possibility this function
+  contains.
+- `scheduling/consent.eligible_rule_ids()` excludes every rule whose
+  `requires_elevation` is true from ever being offered when a schedule is
+  created, so the UI cannot even select `windows-temp` for a schedule.
+
+**Mitigations, disabling.**
+- Disabling a schedule (`scheduling/service.set_enabled`) does both:
+  `schtasks /change ... /disable` on the Task Scheduler task itself, and
+  `Schedule.enabled = False` in `schedules.json`, which `runner.py` checks
+  first, before anything else, on every invocation. Either one failing alone
+  still leaves the other in place.
+- Disabling never cancels a run already in progress — it only prevents the
+  *next* scheduled trigger. An active operation follows the executor's
+  existing cancellation semantics, the same `cancel: threading.Event` every
+  other operation already respects. This is stated rather than left
+  ambiguous: a person disabling a schedule while it happens to be running
+  should not assume the in-flight run stopped.
+
+**What is not covered.** A Task Scheduler task altered outside PolyScour
+between its creation and a given run — repointed at a different program, its
+run level changed — is caught by `scheduling/task.verify()` (an integrity
+check, not a privilege boundary: the task is unelevated either way) before
+anything runs, but a task removed and immediately recreated identically by
+something else running as the same user is indistinguishable from the
+original, because both have exactly the same authority as that user already
+had.
+
 ## Non-goals
 
 PolyScour is not an antivirus and does not try to be. It can say an item is

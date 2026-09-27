@@ -354,6 +354,76 @@ def test_a_near_miss_of_the_supervisor_flag_is_still_unknown(args, monkeypatch):
     assert entry.main(args) == 2
 
 
+# ── the fourth program ──────────────────────────────────────────────────────
+
+def test_the_scheduled_clean_flag_runs_the_runner_and_not_the_application(
+        monkeypatch):
+    import polyscour.app as app
+    import polyscour.scheduling.runner as runner
+
+    monkeypatch.setattr(app, "main",
+                        lambda: pytest.fail("started the GUI for a scheduled clean"))
+    seen = []
+    monkeypatch.setattr(runner, "main", lambda argv: seen.append(argv) or 0)
+
+    assert entry.main(["--scheduled-clean", "abc123"]) == 0
+    assert seen == [["abc123"]]
+
+
+@pytest.mark.parametrize("args", [
+    ["--scheduled-clean-x", "abc123"],
+    ["--SCHEDULED-CLEAN", "abc123"],
+    ["-scheduled-clean", "abc123"],
+])
+def test_a_near_miss_of_the_scheduled_clean_flag_is_still_unknown(
+        args, monkeypatch):
+    import polyscour.app as app
+    monkeypatch.setattr(app, "main",
+                        lambda: pytest.fail(f"{args} started the GUI"))
+
+    assert entry.main(args) == 2
+
+
+def test_the_cleanup_schedules_flag_runs_cleanup_and_not_the_application(
+        monkeypatch):
+    import polyscour.app as app
+    import polyscour.scheduling.cleanup as cleanup
+
+    monkeypatch.setattr(app, "main",
+                        lambda: pytest.fail("started the GUI to clean up schedules"))
+    seen = []
+    monkeypatch.setattr(cleanup, "main", lambda argv: seen.append(argv) or 0)
+
+    assert entry.main(["--cleanup-scheduled-tasks"]) == 0
+    assert seen == [[]]
+
+
+def test_the_scheduled_clean_branch_never_imports_the_gui(tmp_path,
+                                                           monkeypatch):
+    """Same reasoning as the elevated helper: nobody is watching a scheduled
+    task's window, so there is no reason a GUI toolkit should be loaded to
+    run one -- checked in a subprocess for the same reason the helper's
+    equivalent test is."""
+    monkeypatch.setenv("POLYSCOUR_DATA_DIR", str(tmp_path))
+
+    probe = (
+        "import sys\n"
+        "from polyscour.entry import main\n"
+        "code = main(['--scheduled-clean', 'does-not-exist'])\n"
+        "gui = {'customtkinter', 'tkinter', 'PIL', 'pystray'}\n"
+        "loaded = sorted(m for m in sys.modules if m.split('.')[0] in gui)\n"
+        "print(repr((code, loaded)))\n"
+    )
+    env = dict(os.environ, POLYSCOUR_DATA_DIR=str(tmp_path))
+    done = subprocess.run([sys.executable, "-c", probe],
+                          capture_output=True, text=True, timeout=60, env=env)
+
+    assert done.returncode == 0, done.stderr
+    code, loaded = eval(done.stdout.strip())
+    assert loaded == [], f"the scheduled-clean branch imported {loaded}"
+    assert code == 1, "a schedule id that does not exist is a refusal"
+
+
 def test_the_supervisor_branch_never_imports_the_gui(tmp_path):
     """Same property as the elevated branch, for the same reason.
 

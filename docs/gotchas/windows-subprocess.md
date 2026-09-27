@@ -120,6 +120,34 @@ is in `agent-scripting.md`.
 
 ---
 
+## 7. `schtasks /query /xml` can silently drop bytes from long values
+
+Piping `schtasks /query /tn <name> /xml` through `subprocess` — to a pipe or
+to a real file, both measured, both corrupted the same way — can lose
+characters *inside* an element's text, not just add stray whitespace around
+it. A real capture produced:
+
+```
+<Command>"C:\Windows\System32\r\r\otepad.exe"</Command>
+```
+
+The original value was `"C:\Windows\System32\notepad.exe"`. The backslash and
+the leading `n` of `notepad.exe` are gone, replaced by an inserted `CR CR LF`
+— and this happened well before any 80-column console-wrap boundary, so it is
+not the classic console-width-wrap quirk. Regex-stripping `\r`/`\n` cannot
+recover this: the fix has to avoid the corruption, not clean up after it.
+
+**Fix: don't parse `schtasks`' own XML/text rendering for anything you need
+byte-exact.** `Get-ScheduledTask` (PowerShell, `ScheduledTasks` module) reads
+the same task through structured `.NET` objects with no text-rendering step
+to corrupt them; piped through `ConvertTo-Json` it comes back exact, verified
+against the same task that produced the mangled `schtasks` output above.
+Reserve `schtasks.exe` for operations whose result is a plain exit code
+(`/create`, `/delete`) — those never round-trip through this rendering path
+and are not affected.
+
+---
+
 ## When you add to this file
 
 The bar: >15 minutes, it failed *silently* or misleadingly, it is not specific to

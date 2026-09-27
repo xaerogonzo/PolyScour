@@ -129,6 +129,18 @@ Filename: "powershell.exe"; \
 Filename: "{app}\{#AppExeName}"; Description: "Start {#AppName}"; \
     Flags: nowait postinstall skipifsilent
 
+[UninstallRun]
+; Runs before Inno deletes any file below, which is the ordering that
+; matters: a Task Scheduler task surviving past this point would try to
+; launch a program that is no longer there on its next trigger. Removes
+; exactly the tasks PolyScour's own schedules.json record owning -- never a
+; name-pattern sweep of Task Scheduler's live list. Best-effort: a schedule
+; that fails to remove cleanly must not block the rest of the uninstall, so
+; this always exits 0 regardless of what it found.
+Filename: "{app}\{#AppExeName}"; Parameters: "--cleanup-scheduled-tasks"; \
+    StatusMsg: "Removing scheduled cleaning tasks..."; \
+    Flags: runhidden waituntilterminated
+
 [UninstallDelete]
 ; Nothing here removes user data. The vault may hold the only remaining copy of
 ; a file someone deleted through PolyScour, and an uninstaller is not the place
