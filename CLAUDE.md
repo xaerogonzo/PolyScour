@@ -73,7 +73,9 @@ src/polyscour/
 │   ├── rules.py      Load JSON, reconcile against policy (narrow only)
 │   ├── scanner.py    DISCOVER → ANALYZE. Deletes nothing, ever.
 │   ├── planner.py    Findings → recommendations → ActionPlan
-│   └── executor.py   EXECUTE → VERIFY → LOG. The only code that removes things.
+│   ├── executor.py   EXECUTE → VERIFY → LOG. The only code that removes things.
+│   └── recyclebin.py The Recycle Bin: SHQueryRecycleBinW/SHEmptyRecycleBinW,
+│                     not a RootFamily. moderate, irreversible. adr/0012
 ├── integrations/
 │   └── polyshield.py Optional, read-only, three commands, fails closed
 ├── elevation/

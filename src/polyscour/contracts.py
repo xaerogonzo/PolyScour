@@ -40,6 +40,12 @@ class OperationOutcome(enum.Enum):
     """
     SUCCESS = "success"                          # every planned item handled
     SUCCESS_WITH_SKIPS = "success_with_skips"    # all failures expected/benign
+    #: A Shell-level operation (the Recycle Bin) reported success but a
+    #: re-query afterward found it was not actually left empty -- most likely
+    #: an item locked by another process. Distinct from SUCCESS_WITH_SKIPS
+    #: because there is no per-item Skip to point at: the Shell API does not
+    #: say which item survived, only that some did.
+    SUCCESS_WITH_UNEXPECTED_REMAINDER = "success_with_unexpected_remainder"
     PARTIALLY_COMPLETED = "partially_completed"  # some failed unexpectedly
     FAILED = "failed"                            # nothing done, or precondition failed
     CANCELLED = "cancelled"                      # user stopped it; completed items stand
@@ -47,7 +53,8 @@ class OperationOutcome(enum.Enum):
     @property
     def is_clean(self) -> bool:
         return self in (OperationOutcome.SUCCESS,
-                        OperationOutcome.SUCCESS_WITH_SKIPS)
+                        OperationOutcome.SUCCESS_WITH_SKIPS,
+                        OperationOutcome.SUCCESS_WITH_UNEXPECTED_REMAINDER)
 
 
 class SkipReason(enum.Enum):
