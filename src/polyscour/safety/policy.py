@@ -20,6 +20,27 @@ review rather than a JSON edit that does not.
 
 ``POLICY`` also owns the ceilings. A rule may be *stricter* than its policy
 entry; it can never be looser. Authority only ever narrows as it flows outward.
+
+``POLICY_VERSION`` and scheduled cleaning
+------------------------------------------
+
+A scheduled clean (``scheduling/``) consents once, at creation, to a named set
+of rules and re-verifies each rule's own definition hasn't changed before
+every unattended run (``scheduling/consent.py``). That check cannot see a
+change made here, to the policy itself, rather than to a rule file -- a new
+``RootFamily``, a loosened ceiling, an added ``Operation`` -- so this module
+additionally carries a version number a schedule records at creation and
+compares at run time.
+
+**Increment ``POLICY_VERSION`` only for a change that could widen what an
+existing, already-consented rule id is allowed to touch.** A strictly
+narrowing change -- a new denylist entry, a tightened ceiling, a stricter
+``min_age_days`` floor -- does not need one: it can only make a scheduled run
+do less than the user consented to, never more, the same reasoning that lets
+an exclusion be accepted from an untrusted caller elsewhere in this codebase.
+A schedule created against an older, higher-or-equal version keeps running
+undisturbed; one created against a version this module has since moved past
+is refused until reviewed again.
 """
 from __future__ import annotations
 
@@ -219,6 +240,10 @@ class PolicyEntry:
 
 _C = RootFamily
 _O = Operation
+
+#: See the module docstring's "POLICY_VERSION and scheduled cleaning" section.
+#: Bump only for a change that could widen an existing rule id's reach.
+POLICY_VERSION = 1
 
 #: The built-in trust policy. A rule id absent from this mapping cannot load.
 #:

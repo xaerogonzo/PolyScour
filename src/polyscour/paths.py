@@ -137,6 +137,12 @@ def running_executable() -> Path:
     return Path(sys.executable).resolve()
 
 
+def schedules_path() -> Path:
+    """Scheduled-cleaning definitions: rule ids, their consented digests, and
+    the Task Scheduler task each one owns. See ``scheduling/consent.py``."""
+    return app_root() / "schedules.json"
+
+
 def rules_dir() -> Path:
     """Cleaner rule files.
 

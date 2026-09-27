@@ -456,34 +456,41 @@ user. Only the second proves anything. An administrator can write anywhere, so
 an elevated check describes the boundary rather than crossing it; the script
 says so and skips the write probe rather than reporting a pass it did not earn.
 
-## The entry point: one executable, two programs
+## The entry point: one executable, four programs
 
 `PolyScour.exe` with no arguments is the GUI. `PolyScour.exe
 --elevated-helper <request>` is the helper. There is no `helper.exe` — the
 helper has to be the same trusted binary in the same administrator-protected
 directory, or it is a second thing to protect and a second thing to verify.
+Two more branches were added later, each GUI-free for the same reason: the
+Game Mode supervisor (`--supervise-game-mode`) and scheduled cleaning's runner
+(`--scheduled-clean`, `scheduling/runner.py`).
 
-`entry.py` is the compiled entry point, **not** `app.py`, and imports neither
-branch at module scope:
+`entry.py` is the compiled entry point, **not** `app.py`, and imports none of
+the other three branches at module scope:
 
 ```
 argv --> entry.main()
            |
-           +-- "--elevated-helper" --> import helper, run it, exit
-           |                           (no GUI import happens on this path)
-           +-- nothing              --> import app, mainloop()
-           +-- anything else        --> refuse, exit 2
+           +-- "--elevated-helper"    --> import helper, run it, exit
+           |                              (no GUI import happens on this path)
+           +-- "--supervise-game-mode" --> import supervisor, run it, exit
+           +-- "--scheduled-clean"     --> import scheduling.runner, run it, exit
+           +-- nothing                --> import app, mainloop()
+           +-- anything else          --> refuse, exit 2
 ```
 
 `app.py` imports CustomTkinter at module scope, so entering through it would
-load Tk and Tcl into an elevated process — an enormous increase in what runs at
-privilege, for nothing. A subprocess test asserts `customtkinter` is absent
-from `sys.modules` after a real elevated run; asserting it in-process would
-prove nothing, because pytest has already imported it for the UI tests.
+load Tk and Tcl into an elevated (or unattended) process — an enormous
+increase in what runs there, for nothing. A subprocess test asserts
+`customtkinter` is absent from `sys.modules` after a real elevated run and
+after a real `--scheduled-clean` run; asserting it in-process would prove
+nothing, because pytest has already imported it for the UI tests.
 
-Unknown arguments are refused rather than ignored, and `--elevated-helper` is
-an exact string: `--elevated-helper-x` and `--ELEVATED-HELPER` are unknown
-arguments, with a test each. See `docs/adr/0006`.
+Unknown arguments are refused rather than ignored, and every flag is an exact
+string: `--elevated-helper-x` and `--ELEVATED-HELPER` are unknown arguments,
+with a test each, and the same holds for `--scheduled-clean`. See
+`docs/adr/0006`.
 
 ### Frozen and source differ, and the difference is asked once
 
@@ -652,6 +659,70 @@ sentinel from a watcher thread (its wait loop starts only after the blocking
 (T13). Cancel cannot dismiss the prompt — the row stays locked until it is
 answered — but answering it later changes nothing, and the row's History entry
 is closed as not done.
+
+## Scheduled cleaning
+
+The fourth thing outside the cleaning pipeline proper, and the first that
+mutates the machine with nobody watching a confirmation dialog.
+
+```
+scheduling/consent.py    the canonical rule digest, POLICY_VERSION check,
+                          the Schedule dataclass -- THE AUTHORITY for
+                          "does this schedule's consent still hold"
+scheduling/store.py      schedules.json -- the schedule's own stored data,
+                          never authority (mirrors safety/policy.py's split
+                          between a rule file and what it may do)
+scheduling/task.py       Windows Task Scheduler: create/remove/verify/
+                          set_enabled, via schtasks.exe and, for verify,
+                          PowerShell's Get-ScheduledTask
+scheduling/service.py    orchestration -- validate -> create the task ->
+                          persist; remove the task -> delete the record
+scheduling/runner.py     what --scheduled-clean <id> actually does: check,
+                          check, check, scan, plan(dry_run=False), execute
+```
+
+`consent.py` and `task.py` do not depend on each other; `service.py` is where
+both meet, the same reason `startup/service.py` exists to keep `manager.py`
+and `policy.py` from importing one another.
+
+### Why `task.py` uses two different tools for two different jobs
+
+`schtasks.exe /create` and `/delete` are used because their result is a plain
+exit code — nothing to parse, nothing to get wrong. `schtasks.exe /query
+/xml`, by contrast, was measured to silently corrupt long element values when
+captured through `subprocess` (`docs/gotchas/windows-subprocess.md` #7) — a
+real run turned `"C:\Windows\System32\notepad.exe"` into
+`"C:\Windows\System32\r\r\otepad.exe"`, losing the backslash and the leading
+`n`, reproducibly, regardless of whether the output went to a pipe or a real
+file. `task.verify()` therefore goes through PowerShell's
+`Get-ScheduledTask` (via the shared `polybedrock.ps_run.run_ps`, the same
+runner `win_security.get_system_health()` already uses), piped through
+`ConvertTo-Json` — structured `.NET` objects, with no text-rendering step for
+`schtasks` to corrupt.
+
+### The runner's order of checks
+
+```
+run(schedule_id)
+    schedule exists and is enabled?              store.get, Schedule.enabled
+        task.verify()  -- the live task still matches what was created?
+            consent.verify() -- policy version, then each rule's digest
+                scan  ->  plan(dry_run=False)  ->  execute(allow_elevation
+                                                    never passed as True)
+```
+
+Any refusal before the scan is logged to `paths.logs_dir() /
+"scheduled-clean.log"` and the process exits — there is no GUI for a refusal
+to appear in, and an unattended feature that fails silently is exactly the
+"empty is not unknown" mistake this codebase exists to avoid elsewhere. A
+real cleanup still reaches History through the ordinary `ledger.record()`
+call inside `Executor.execute()`; nothing schedule-specific was added there,
+because a scheduled run is not a new kind of operation, only a new caller.
+
+See `docs/adr/0014` for why consent is bound to a digest rather than a rule
+id, and `docs/SAFETY.md` #13 for how this sits alongside the other three
+policy authorities.
+
 ## Threading
 
 Tk is not thread-safe. One rule covers it:
@@ -670,8 +741,10 @@ window and make **Cancel** unclickable, defeating the point of cancellation.
 
 ## Concurrency across processes
 
-The GUI, a future scheduled task, a future CLI and a future elevated helper can
-all want to act at once.
+The GUI, a scheduled task's runner, a future CLI and the elevated helper can
+all want to act at once — no longer a hypothetical for the first of those:
+`scheduling/runner.py` builds an ordinary `Executor` and gets this lock for
+free, the same way any other caller does.
 
 > Only one mutating PolyScour operation may hold the ledger/vault mutation lock
 > at a time. Scanning may run concurrently; mutation serialises.

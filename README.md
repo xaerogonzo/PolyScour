@@ -199,7 +199,7 @@ the answer is. It is a link, not a claim about what is on your disk.
 
 Driver management, registry cleaning, secure wipe, duplicate finder,
 WinGet updater, browser extension manager, cloud-drive cleaner,
-process explorer, service manager, scheduled cleaning, CLI, portable mode.
+process explorer, service manager, CLI, portable mode.
 
 A duplicate finder is the nearest of these and is still declined: it needs you
 to hand it a folder to search, and every path PolyScour accepts today can only
@@ -236,6 +236,36 @@ Sorted by size, because size is a fact — not because a large program is more
 worth removing than a small one, and there is no "recommended" set here
 either. A command PolyScour cannot parse and launch unambiguously is shown
 disabled with the reason, never silently hidden or guessed at.
+
+## Scheduled cleaning
+
+Runs a fixed, reviewed set of cleaning rules on its own — unelevated, and
+only while you are logged on. There is no confirmation dialog at run time;
+the whole point of a schedule is that nobody is watching, so the one
+confirmation happens **once, when you create it**, in Settings, and it names
+exactly what the schedule may do: "this schedule is permitted to perform
+these N cleaning operations and nothing else."
+
+That consent has to keep meaning the same thing later, unattended, which is
+the part an obvious implementation gets wrong. A schedule does not remember
+"clean the Chrome cache" — it remembers exactly what that rule said, at the
+moment you agreed to it. If a future update changes what a rule does, the
+schedule notices and skips that rule until you look at it again, rather than
+quietly doing something new in your name. A rule that needs administrator
+rights is never offered for scheduling in the first place: a scheduled clean
+never elevates, and nothing about a schedule's own settings can change that.
+
+Delivery is an ordinary Windows Task Scheduler task, created only for you,
+that runs only while you are logged in — not a hidden background service,
+and gone the moment you remove the schedule or uninstall PolyScour. Before
+every run, PolyScour checks that the task Windows is about to run is still
+the exact one it created; if something else has touched it, the run is
+refused rather than trusted. Every real cleanup a schedule performs shows up
+in History exactly like one you ran yourself.
+
+Turning a schedule off stops its *next* run; it does not interrupt one
+already under way. `docs/adr/0014` has the full design, and
+`docs/THREAT_MODEL.md` records what this does and does not defend against.
 
 ## Administrator rights
 

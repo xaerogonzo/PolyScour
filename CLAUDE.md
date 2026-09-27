@@ -119,8 +119,23 @@ src/polyscour/
 │   └── launcher.py   Re-parses, re-checks, launches the vendor's own
 │                     UninstallString unelevated. No ledger row — not
 │                     PolyScour's mutation to record
+├── scheduling/
+│   ├── consent.py    Canonical rule digest + POLICY_VERSION check — THE
+│   │                 AUTHORITY for "does this schedule's consent still
+│   │                 hold". Never trusts a rule id alone (adr/0014)
+│   ├── store.py      schedules.json. Data, never authority
+│   ├── task.py       Task Scheduler: schtasks for create/delete (plain exit
+│   │                 codes), Get-ScheduledTask via PowerShell for verify —
+│   │                 schtasks /query /xml corrupts long values, measured
+│   │                 (docs/gotchas/windows-subprocess.md #7)
+│   ├── service.py    validate -> create task -> persist; remove task ->
+│   │                 delete record
+│   └── runner.py     --scheduled-clean <id>: check, check, check, scan,
+│                     plan(dry_run=False), execute — allow_elevation is
+│                     never passed True, not merely checked and refused
 └── views/            dashboard, clean, storage, gamemode, startup, uninstall,
-                      history, settings
+                      history, settings (schedules live in Settings, not
+                      their own view)
 rules/cleaners/*.json  Data only. Never executable, never authority.
 tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.

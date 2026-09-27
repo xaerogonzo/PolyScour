@@ -272,6 +272,36 @@ which is the opposite of what supervising requires. What the helper established
 is the precedent: a second process gets a threat-model section written before
 its code.
 
+That section was written first — `THREAT_MODEL.md`, "The Game Mode
+supervisor", plus T20–T22 — and `gamemode/supervisor.py` was built to it. It
+commits to three things:
+
+- **Unelevated.** Resuming the user's own processes needs no administrator
+  rights, so asking for them would buy a standing target to pay for a
+  convenience.
+- **Not persistent.** Started with a session, gone when the GUI's process is.
+- **Its authority is the ledger and nothing else.** It replays what the session
+  recorded; it never enumerates the system looking for suspended processes.
+  That would touch things PolyScour never froze — someone's debugger, an
+  installer mid-operation — with no record that anything had been suspended.
+
+And it is honest about what it buys: the window narrows from "until the user
+next opens PolyScour, which may be never" to "until PolyScour's process ends".
+A kill that takes both leaves the gap exactly as T12 describes it.
+
+Two mechanics are worth knowing when reading the code. It waits on a **handle**
+rather than a pid, and verifies the parent's creation time through
+`GetProcessTimes` on that handle before waiting — a handle names a process
+object, so a recycled pid cannot redirect it, and asking the handle rather than
+the pid means the answer is about the object actually held. And it calls
+`gamemode.recover()` rather than reimplementing it, because a second copy of
+"resume what we froze" is a second place to forget the PID-reuse guard.
+
+`tests/conftest.py` refuses to let the suite spawn a real one. It was needed:
+two existing Game Mode tests reached the spawn on the first run after wiring,
+and a detached supervisor waiting on **pytest** would, at exit, open the
+developer's real ledger.
+
 ## 10. The Recycle Bin: a third authority, for a Shell operation rather than a path
 
 Emptying the Recycle Bin is not a filesystem operation either, so it does not
@@ -304,37 +334,7 @@ Two things this operation does that no `RootFamily` rule does:
 `docs/adr/0012` has the full reasoning, including why this earned its own
 execution path rather than a new `RootFamily`.
 
-That section was written first — `THREAT_MODEL.md`, "The Game Mode
-supervisor", plus T20–T22 — and `gamemode/supervisor.py` was built to it. It
-commits to three things:
-
-- **Unelevated.** Resuming the user's own processes needs no administrator
-  rights, so asking for them would buy a standing target to pay for a
-  convenience.
-- **Not persistent.** Started with a session, gone when the GUI's process is.
-- **Its authority is the ledger and nothing else.** It replays what the session
-  recorded; it never enumerates the system looking for suspended processes.
-  That would touch things PolyScour never froze — someone's debugger, an
-  installer mid-operation — with no record that anything had been suspended.
-
-And it is honest about what it buys: the window narrows from "until the user
-next opens PolyScour, which may be never" to "until PolyScour's process ends".
-A kill that takes both leaves the gap exactly as T12 describes it.
-
-Two mechanics are worth knowing when reading the code. It waits on a **handle**
-rather than a pid, and verifies the parent's creation time through
-`GetProcessTimes` on that handle before waiting — a handle names a process
-object, so a recycled pid cannot redirect it, and asking the handle rather than
-the pid means the answer is about the object actually held. And it calls
-`gamemode.recover()` rather than reimplementing it, because a second copy of
-"resume what we froze" is a second place to forget the PID-reuse guard.
-
-`tests/conftest.py` refuses to let the suite spawn a real one. It was needed:
-two existing Game Mode tests reached the spawn on the first run after wiring,
-and a detached supervisor waiting on **pytest** would, at exit, open the
-developer's real ledger.
-
-## 10. Startup entries: a third policy, and the first registry write
+## 11. Startup entries: a third policy, and the first registry write
 
 The Startup Manager is the first feature that changes registry state, so it is
 worth being exact about what it writes:
@@ -406,7 +406,7 @@ The write is then **read back**. `SetValueEx` returning without error is not
 evidence the value is what was asked for, and "verify rather than assume" is
 what the cleaning path already does when it re-scans afterwards.
 
-## 11. Uninstall: a fourth policy, for launching a command rather than changing one
+## 12. Uninstall: a fourth policy, for launching a command rather than changing one
 
 Launching a program's registered uninstaller is neither a filesystem operation
 nor a registry write, so it runs through neither the guard chain nor
@@ -444,6 +444,49 @@ button can be disabled with its reason shown) and again immediately before
 `uninstall/launcher.launch()` calls `Popen` — the registry value or the file
 on disk can change between the two, the same race `guard.authorize()` and
 Game Mode's `veto()` both close by checking twice.
+
+## 13. Scheduled cleaning: consent that has to keep meaning the same thing
+
+Every policy above assumes a person is present to authorise a single action.
+A schedule authorises an unbounded number of future, unattended ones from one
+moment of consent, which is a different problem: not *may this be touched*,
+but *does this still mean what was agreed to*. `scheduling/consent.py` is the
+authority for that question, checked fresh before every run by
+`scheduling/runner.py` — never assumed to still hold from creation.
+
+**A rule id is not a stable description of what will happen; a hash of its
+content is.** Each `Schedule` stores a canonical SHA-256 digest of every
+rule's JSON at consent time. A rule whose current digest no longer matches is
+refused on its own, not the whole schedule — the same "detection and
+diagnosis stay separate from the decision" shape as everywhere else in this
+codebase, applied to "has this changed" rather than "may this be touched".
+`docs/adr/0014` has the full reasoning; `docs/THREAT_MODEL.md` T28 has the
+threat.
+
+**A digest cannot see a change to the policy behind an unchanged rule.**
+`safety.policy.POLICY_VERSION` closes that gap: one integer, bumped only for
+a change that could widen what an existing rule id may touch. A schedule
+whose recorded version has been passed is refused **as a whole** — this is
+not a per-rule fact, so it does not get a per-rule refusal. T29.
+
+**Elevation is not read from the schedule; it is absent from the code that
+runs it.** `scheduling/runner.py` never passes `allow_elevation=True` to
+`Executor`, regardless of anything `Schedule.elevation_allowed` claims, and
+`scheduling/consent.eligible_rule_ids()` excludes every `requires_elevation`
+rule before a schedule can ever be created for it. T30.
+
+**Disabling acts at two levels, and never retroactively.**
+`scheduling/service.set_enabled()` disables the Task Scheduler task itself
+and the stored flag `runner.py` checks first; either surviving alone still
+stops the next run. An operation already in progress follows its own
+cancellation semantics, unaffected by a disable that happens mid-run. T30.
+
+**The delivery mechanism is verified, not merely trusted.**
+`scheduling/task.verify()` confirms the *live* Task Scheduler task still
+points at the program PolyScour installed, with the arguments PolyScour gave
+it, unelevated and interactive-only, before a single rule is scanned — an
+integrity check, not a privilege boundary, since the task carries no more
+authority than the logged-in user already has either way.
 
 ## What is tested
 

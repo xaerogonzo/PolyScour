@@ -42,6 +42,8 @@ import sys
 #: something helpfully accepts.
 HELPER_FLAG = "--elevated-helper"
 SUPERVISOR_FLAG = "--supervise-game-mode"
+SCHEDULED_CLEAN_FLAG = "--scheduled-clean"
+CLEANUP_SCHEDULES_FLAG = "--cleanup-scheduled-tasks"
 
 #: Backwards-compatible alias. The name was private when there was one flag.
 _HELPER_FLAG = HELPER_FLAG
@@ -74,8 +76,10 @@ _USAGE = f"""PolyScour — a transparent, evidence-based Windows maintenance sui
   PolyScour.exe                                    start the application
   PolyScour.exe {HELPER_FLAG} <request>            run one elevated operation
   PolyScour.exe {SUPERVISOR_FLAG} <pid> <started>  watch a Game Mode session
+  PolyScour.exe {SCHEDULED_CLEAN_FLAG} <schedule-id>   run one scheduled clean
+  PolyScour.exe {CLEANUP_SCHEDULES_FLAG}      remove every task PolyScour owns
 
-Neither of the latter two is a supported way to run anything by hand.
+None of the latter four is a supported way to run anything by hand.
 
 The second is launched by PolyScour through Windows' own administrator prompt:
 the request file names an operation from a closed set, and the elevated process
@@ -83,7 +87,17 @@ re-checks every part of it regardless of who wrote it.
 
 The third is an ordinary, unprivileged child that waits for the process it was
 given and then resumes whatever the ledger says that process left frozen. It
-holds no privilege, and its arguments can only ever make it do less."""
+holds no privilege, and its arguments can only ever make it do less.
+
+The fourth is launched only by a Task Scheduler task PolyScour itself created,
+runs unelevated, and re-verifies the schedule's own consent (which rules, and
+whether their definitions still match what was agreed to) before touching
+anything -- it does not trust the schedule id to mean what it once meant.
+
+The fifth is launched by the uninstaller, before it removes this program, and
+removes exactly the Task Scheduler tasks PolyScour's own records name -- never
+a name-pattern sweep of Task Scheduler's live list, which could catch a task
+someone else created that merely happens to be named similarly."""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,6 +115,21 @@ def main(argv: list[str] | None = None) -> int:
         # window by seconds and there is no sense keeping Tk loaded to do it.
         from polyscour.gamemode.supervisor import main as supervisor_main
         return supervisor_main(args[1:])
+
+    if args and args[0] == SCHEDULED_CLEAN_FLAG:
+        # GUI-free for the same reason as the helper: nobody is watching a
+        # scheduled task's window, so there is no reason to load one.
+        from polyscour.scheduling.runner import main as scheduled_clean_main
+        return scheduled_clean_main(args[1:])
+
+    if args and args[0] == CLEANUP_SCHEDULES_FLAG:
+        # Called by the uninstaller, before it removes this binary: remove
+        # every Task Scheduler task PolyScour itself created, by the exact
+        # path each Schedule recorded -- never a name-pattern sweep of Task
+        # Scheduler's live list, which could catch an unrelated task a
+        # person happens to have named similarly.
+        from polyscour.scheduling.cleanup import main as cleanup_main
+        return cleanup_main(args[1:])
 
     if args:
         print(f"unknown argument: {args[0]!r}\n", file=sys.stderr)
