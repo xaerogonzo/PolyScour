@@ -68,6 +68,17 @@ Every rule has `max_candidates`, `max_bytes` and `max_depth`. Exceeding one
 **aborts the rule and reports**, rather than truncating. A partial figure
 presented confidently is worse than an honest failure.
 
+## What this format cannot express: the Recycle Bin
+
+Emptying the Recycle Bin is **not** a JSON rule and has no `RootFamily` or
+`PolicyEntry`. There is no glob-scanned path for `safety/policy.py` to
+authorise — the Shell API (`SHQueryRecycleBinW` / `SHEmptyRecycleBinW`) is the
+authority on what is in a volume's Recycle Bin, not the on-disk
+`$Recycle.Bin\<SID>` folder treated as an ordinary directory. It is
+implemented in `cleaning/recyclebin.py` and recognised by
+`cleaning/executor.py` as a special case, not loaded through `rules.py`. See
+`docs/adr/0012`.
+
 ## Before you ship one
 
 - [ ] Does the description say what is *not* touched?

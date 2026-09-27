@@ -18,6 +18,12 @@ DISCOVER ─ ANALYZE ─ PRESENT ─ PLAN ─ CONFIRM ─ EXECUTE ─ VERIFY ─
 - **`executor.py`** is the only code in PolyScour that removes anything.
 - **`ledger.py`** records every operation, including dry runs, labelled as
   rehearsals.
+- **`recyclebin.py`** is the one findings source that skips DISCOVER's usual
+  glob walk and EXECUTE's usual guard call — it asks the Shell API
+  (`SHQueryRecycleBinW`/`SHEmptyRecycleBinW`) rather than walking
+  `$Recycle.Bin\<SID>` as a directory, because the Shell, not the filesystem,
+  is the authority on what is in a Recycle Bin. `executor.py` recognises its
+  rule id before the generic per-`Finding` path runs. See `docs/adr/0012`.
 
 ## Layers
 
@@ -366,6 +372,41 @@ Tasks and services whose programs all live inside the Windows folder are
 counted, not listed (a location, not a verdict; ADR 0011 Decision 3). Anything
 unreadable stays in the list.
 
+## Uninstall
+
+The third feature outside the cleaning pipeline. Unlike the Startup Manager,
+it writes nothing of its own — it reads the registry's `Uninstall` keys and
+launches whatever a program already registered there, the same shape as
+Control Panel's own Programs and Features.
+
+```
+uninstall/inventory.py   read-only: HKLM / HKLM_WOW6432 / HKCU ...\Uninstall\*
+        |
+uninstall/command.py     UninstallString -> UninstallCommand (CommandLineToArgvW)
+        |
+uninstall/policy.py      may this be launched, unelevated, unambiguously?
+        |
+uninstall/launcher.py    re-parse, re-check, subprocess.Popen(argv, shell=False)
+```
+
+`policy.evaluate()` pairs `command.parse()` with `policy.veto()` in one place
+so the view (which shows the refusal reason) and the launcher (which acts on
+it) can never disagree about what a program's registered command parses to.
+
+**No `ActionResult`, no ledger row.** Every other destructive-shaped feature
+in this codebase ends in `ledger.record()` because PolyScour did something
+reversible or not. Launching a vendor's uninstaller is neither — PolyScour
+does not know what it does, cannot verify it, and the vendor's own uninstaller
+is not a PolyScour operation to record. `uninstall/launcher.py`'s `LaunchResult`
+says only whether the launch itself succeeded, never what happened after.
+
+**Command parsing, not deletion, is the safety-relevant step here.**
+`safety/policy.py`'s discipline — a rule cannot smuggle in an unauthorised
+path — has an analogue for a command line: `UninstallString` is arbitrary and
+untrusted, so it is tokenised with `CommandLineToArgvW` (the same tokenizer
+`CreateProcess` uses) and launched as an argv list, never joined back into a
+string and handed to a shell. `docs/adr/0013` has the reasoning.
+
 ## Two lifetimes: resource and data
 
     RESOURCE   ships with the build, read-only, may sit in a temporary
@@ -679,7 +720,7 @@ call inside `Executor.execute()`; nothing schedule-specific was added there,
 because a scheduled run is not a new kind of operation, only a new caller.
 
 See `docs/adr/0014` for why consent is bound to a digest rather than a rule
-id, and `docs/SAFETY.md` #11 for how this sits alongside the other three
+id, and `docs/SAFETY.md` #13 for how this sits alongside the other three
 policy authorities.
 
 ## Threading

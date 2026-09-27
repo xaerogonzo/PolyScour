@@ -98,6 +98,28 @@ The ordinary run is **entirely unelevated**. Anything needing administrator
 rights is skipped and said so plainly — and then offered as a retry you can
 decline, with the count and the rule named before the prompt appears.
 
+## Recycle Bin
+
+One more thing the Clean screen finds and offers to empty, per volume — but
+unlike every rule above, it is **not** a cache and is **not** `safe`.
+
+Emptying the Recycle Bin is asked of Windows itself
+(`SHQueryRecycleBinW`/`SHEmptyRecycleBinW`), never done by deleting files
+inside `$Recycle.Bin` directly — that folder is Windows' own bookkeeping, and
+manipulating it as an ordinary directory risks corrupting the index it keeps.
+PolyScour's own confirmation is the only one you see; Windows' own
+confirmation, progress dialog and sound are suppressed for this operation so
+there is exactly one place asking, not two.
+
+**This is `moderate` risk and explicitly irreversible.** Deleting a file into
+the Recycle Bin and consenting to its permanent destruction are not the same
+decision — the Recycle Bin is what makes the first one recoverable, and this
+screen removes that recovery path. It is never pre-ticked, unlike a regenerable
+cache, and the confirmation says plainly that PolyScour cannot undo it. After
+emptying, PolyScour asks Windows again to confirm the bin is actually empty;
+if something in it was locked and survived, that is reported rather than
+recorded as a plain success. `docs/adr/0012` has the full reasoning.
+
 ## Storage
 
 Where the disk actually went — and, with equal prominence, where PolyScour
@@ -176,8 +198,8 @@ the answer is. It is a link, not a claim about what is on your disk.
 ## What it deliberately does not do yet
 
 Driver management, registry cleaning, secure wipe, duplicate finder,
-uninstaller, WinGet updater, browser extension manager, cloud-drive cleaner,
-process explorer, service manager, CLI, portable mode, Recycle Bin.
+WinGet updater, browser extension manager, cloud-drive cleaner,
+process explorer, service manager, CLI, portable mode.
 
 A duplicate finder is the nearest of these and is still declined: it needs you
 to hand it a folder to search, and every path PolyScour accepts today can only
@@ -187,6 +209,33 @@ that rather than leaving it as an omission.
 
 The strongest part of this project is what it refuses to build. The shared
 substrate and one trustworthy cleaner come first.
+
+## Uninstall
+
+What Windows recorded as installed, and a button that starts each program's
+own uninstaller. **PolyScour does not remove programs itself** — no deleted
+files, no deleted registry keys, no idea of what a program's "leftovers" are.
+That is exactly the judgement call a duplicate finder would also need and
+that this project has already declined above.
+
+"Run Uninstaller" launches the exact command Windows' own Programs and
+Features would — the program's registered `UninstallString`, split the same
+way `CreateProcess` itself would (`CommandLineToArgvW`, never a shell). A
+quiet/unattended variant some installers register (`QuietUninstallString`) is
+recorded but never used by this button: it means something different from
+"run the program's own uninstaller," which is the one thing this screen
+promises.
+
+PolyScour launches it unelevated and then steps out of the way — it does not
+elevate itself to start it, does not wait for it, and does not track what it
+does afterward. The vendor's own uninstaller may still ask Windows for
+administrator rights through its own prompt, exactly as if you had launched
+it from Control Panel yourself.
+
+Sorted by size, because size is a fact — not because a large program is more
+worth removing than a small one, and there is no "recommended" set here
+either. A command PolyScour cannot parse and launch unambiguously is shown
+disabled with the reason, never silently hidden or guessed at.
 
 ## Scheduled cleaning
 
@@ -409,15 +458,17 @@ something.
 ## Optional: PolyShield
 
 If [PolyShield](https://github.com/xaerogonzo/Polyshield-Antivirus) is installed
-and running, the dashboard gains one tile showing real security posture and
-threat-intelligence freshness.
+and running, the dashboard gains one tile: real-time protection, process
+monitoring, and how many of PolyShield's enabled threat-intelligence feeds
+need attention — using PolyShield's own freshness classification, not a number
+PolyScour computed itself.
 
 If it is not, the tile simply does not appear. No greyed-out teaser, no
 advertisement. PolyScour is a complete application on its own, and an
 integration test asserts it behaves identically whether PolyShield is absent,
 present, or installed-but-crashed.
 
-The integration asks exactly three questions — `PING`, `STATUS`,
+The integration asks exactly two questions — `PING`, and `STATUS` followed by
 `GET_INTEL_STATUS` — over an authenticated local socket, and **fails closed**.
 There is no code path from PolyScour that asks PolyShield to *do* anything.
 

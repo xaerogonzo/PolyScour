@@ -302,7 +302,39 @@ two existing Game Mode tests reached the spawn on the first run after wiring,
 and a detached supervisor waiting on **pytest** would, at exit, open the
 developer's real ledger.
 
-## 10. Startup entries: a third policy, and the first registry write
+## 10. The Recycle Bin: a third authority, for a Shell operation rather than a path
+
+Emptying the Recycle Bin is not a filesystem operation either, so it does not
+run through the guard chain above, and it is not a `RootFamily` — there is no
+`PolicyEntry` for `recycle-bin` in `POLICY`, and calling `entry_for("recycle-bin")`
+raises `PolicyViolation` deliberately. `cleaning/executor.py` recognises the
+rule id and routes it to `cleaning/recyclebin.py` *before* the generic
+per-finding path ever calls `entry_for`.
+
+Its authority is the Shell API itself: `SHQueryRecycleBinW` and
+`SHEmptyRecycleBinW` operate only on the current user's own Recycle Bin, which
+needs no further permission check, the same way emptying it from Explorer
+needs none. `$Recycle.Bin\<SID>` is never opened, walked or unlinked as an
+ordinary directory — doing so would risk corrupting the index those two Shell
+calls maintain, especially if a run were interrupted partway by a locked item.
+
+Two things this operation does that no `RootFamily` rule does:
+
+- Its own `RiskLevel` is `MODERATE` and `reversible=False`, not `SAFE` — the
+  Recycle Bin providing recovery for a prior deletion is not the same consent
+  as permanently destroying that recovery path, and `planner.recommend()`
+  correspondingly never pre-ticks it.
+- The executor re-queries `SHQueryRecycleBinW` immediately after
+  `SHEmptyRecycleBinW` reports success, and compares the before/after item
+  count and bytes. A nonzero remainder — most likely a locked item — becomes
+  `OperationOutcome.SUCCESS_WITH_UNEXPECTED_REMAINDER` rather than a silent
+  `SUCCESS`, because there is no single failed `Finding` a `Skip` could point
+  at to explain it; only the bin's own before/after figures do.
+
+`docs/adr/0012` has the full reasoning, including why this earned its own
+execution path rather than a new `RootFamily`.
+
+## 11. Startup entries: a third policy, and the first registry write
 
 The Startup Manager is the first feature that changes registry state, so it is
 worth being exact about what it writes:
@@ -374,7 +406,46 @@ The write is then **read back**. `SetValueEx` returning without error is not
 evidence the value is what was asked for, and "verify rather than assume" is
 what the cleaning path already does when it re-scans afterwards.
 
-## 11. Scheduled cleaning: consent that has to keep meaning the same thing
+## 12. Uninstall: a fourth policy, for launching a command rather than changing one
+
+Launching a program's registered uninstaller is neither a filesystem operation
+nor a registry write, so it runs through neither the guard chain nor
+`startup/policy.py`. It gets its own authority in `uninstall/policy.py`, the
+same shape as the other three: **the registry proposes a command, reviewed
+code decides whether PolyScour may launch it.**
+
+The question is deliberately narrow and mechanical — *can this be launched
+unelevated and unambiguously* — never *should this program be removed*.
+`uninstall/policy.veto()` refuses exactly three things:
+
+| Refusal | Covers |
+|---|---|
+| The command could not be parsed | `uninstall/command.parse()` returned `None` — `CommandLineToArgvW` itself could not tokenise the registered string |
+| The executable's own file name is on `_NEVER_LAUNCH` | PolyScour will not launch itself, the same "named, not detected" choice `startup/policy.py` makes for its own autorun entry |
+| `NoRemove` is set | Windows itself records this program as not removable |
+
+Nothing here judges the program being removed. A large, rarely-used, or
+unfamiliar-publisher program is listed identically to any other — sorted by
+size because size is a fact, never because it implies which program is worth
+removing.
+
+**The safety-relevant step is command parsing, not deletion.** There is
+nothing here for a vault or a ledger to hold — PolyScour does not delete
+anything itself, and the vendor's own uninstaller is not a PolyScour
+mutation to record. What stands in for "never force" and "authorise twice"
+here is `docs/adr/0013`: `UninstallString` is tokenised with
+`CommandLineToArgvW`, the same way `CreateProcess` itself would, and launched
+as an argv list with `shell=False` — never joined back into a string and
+handed to a shell, which would let a string containing `&` or `|` run more
+than the one program it claims to be.
+
+`uninstall/policy.evaluate()` is checked once when a row is drawn (so a
+button can be disabled with its reason shown) and again immediately before
+`uninstall/launcher.launch()` calls `Popen` — the registry value or the file
+on disk can change between the two, the same race `guard.authorize()` and
+Game Mode's `veto()` both close by checking twice.
+
+## 13. Scheduled cleaning: consent that has to keep meaning the same thing
 
 Every policy above assumes a person is present to authorise a single action.
 A schedule authorises an unbounded number of future, unattended ones from one

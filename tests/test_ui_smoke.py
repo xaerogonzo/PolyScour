@@ -54,7 +54,7 @@ def app(isolated):
 def test_the_shell_builds(app):
     assert app.title() == "PolyScour"
     assert set(app._nav_buttons) == {"dashboard", "clean", "storage", "game",
-                                     "startup", "history", "settings"}
+                                     "startup", "uninstall", "history", "settings"}
 
 
 def test_the_dashboard_is_what_opens_and_is_the_only_page_built(app):
@@ -107,7 +107,9 @@ def test_the_polyshield_tile_is_absent_when_polyshield_is(app):
     dashboard = app.get_view("dashboard")
     dashboard._render_polyshield(
         type("P", (), {"available": False, "watcher_running": None,
-                       "intel_age_days": None})())
+                       "process_monitor_running": None,
+                       "intel_feeds_enabled": None,
+                       "intel_feeds_stale_or_error": None})())
     assert not dashboard.polyshield.winfo_ismapped()
 
 

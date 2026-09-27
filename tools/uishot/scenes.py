@@ -141,11 +141,15 @@ def dashboard(session):
         "recent_patches": [{"kb": "KB5121003", "installed_on": "2026-08-13"}],
     })
     view._render_polyshield(type("P", (), {
-        "available": False, "watcher_running": None, "intel_age_days": None})())
+        "available": False, "watcher_running": None,
+        "process_monitor_running": None, "intel_feeds_enabled": None,
+        "intel_feeds_stale_or_error": None})())
     session.shot("dashboard_no_polyshield")
 
     view._render_polyshield(type("P", (), {
-        "available": True, "watcher_running": True, "intel_age_days": 2})())
+        "available": True, "watcher_running": True,
+        "process_monitor_running": True, "intel_feeds_enabled": 4,
+        "intel_feeds_stale_or_error": 1})())
     session.shot("dashboard_with_polyshield")
 
 
@@ -433,6 +437,51 @@ def startup_waiting(session):
     finally:
         startup_view.list_items = real
         startup_view.read_inventory = real_inventory
+
+
+@scene("uninstall")
+def uninstall(session):
+    """A few installed programs: one launchable, one whose command could not
+    be parsed, one PolyScour itself would refuse, one Windows marks
+    not-removable. Constructed rather than read: the real list is this
+    machine's installed software, which differs per machine.
+    """
+    from polyscour.uninstall.inventory import Hive, InstalledProgram
+    from polyscour.views import uninstall_view
+
+    def program(name, publisher, version, size_kb, install_date,
+               uninstall_string, no_remove=False):
+        return InstalledProgram(
+            name=name, version=version, publisher=publisher,
+            install_location=rf"C:\Program Files\{name}",
+            install_date=install_date,
+            estimated_size_bytes=size_kb * 1024 if size_kb else None,
+            uninstall_string=uninstall_string, quiet_uninstall_string="",
+            no_remove=no_remove,
+            source_registry_key=rf"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion"
+                                rf"\Uninstall\{{{name}}}",
+            hive=Hive.HKLM)
+
+    fixed = [
+        program("Big Suite", "Vendor Inc", "4.2.1", 512_000, "20240115",
+               r'"C:\Program Files\Big Suite\uninstall.exe" /S'),
+        program("Old Tool", "Vendor Inc", "1.0", 8_000, "20220301", ""),
+        program("Fixed Component", "Platform Vendor", "2.0", None, "",
+               r"C:\Windows\fixedcomp.exe", no_remove=True),
+    ]
+
+    def _fixture():
+        from polyscour.uninstall.inventory import Inventory, ReadStatus
+        return Inventory(programs=fixed, statuses=[ReadStatus(Hive.HKLM, listed=len(fixed))])
+
+    real = uninstall_view.read_inventory
+    uninstall_view.read_inventory = _fixture
+    try:
+        view = session.mount(uninstall_view.UninstallView, app=_app())
+        view.refresh()
+        session.shot("uninstall_entries")
+    finally:
+        uninstall_view.read_inventory = real
 
 
 def _storage_fixture():

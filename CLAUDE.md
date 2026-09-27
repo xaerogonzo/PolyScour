@@ -73,7 +73,9 @@ src/polyscour/
 │   ├── rules.py      Load JSON, reconcile against policy (narrow only)
 │   ├── scanner.py    DISCOVER → ANALYZE. Deletes nothing, ever.
 │   ├── planner.py    Findings → recommendations → ActionPlan
-│   └── executor.py   EXECUTE → VERIFY → LOG. The only code that removes things.
+│   ├── executor.py   EXECUTE → VERIFY → LOG. The only code that removes things.
+│   └── recyclebin.py The Recycle Bin: SHQueryRecycleBinW/SHEmptyRecycleBinW,
+│                     not a RootFamily. moderate, irreversible. adr/0012
 ├── integrations/
 │   └── polyshield.py Optional, read-only, three commands, fails closed
 ├── elevation/
@@ -105,6 +107,18 @@ src/polyscour/
 │   ├── service.py    veto -> ledger -> registry (or helper), and the undo
 │   └── inventory.py  READ-ONLY: folders, RunOnce, logon/boot tasks, services.
 │                     No writer, no switch (adr/0011). Unread != none found
+├── uninstall/
+│   ├── inventory.py  READ-ONLY: HKLM/HKLM_WOW6432/HKCU ...\Uninstall\*.
+│   │                 No removal logic; SystemComponent=1 hidden, Windows'
+│   │                 own convention. Sorted by size — no "last used" signal
+│   ├── command.py    UninstallString -> UninstallCommand via
+│   │                 CommandLineToArgvW. No shell=True, ever
+│   ├── policy.py     veto() — can this be launched unelevated and
+│   │                 unambiguously? THE AUTHORITY, same shape as safety/
+│   │                 and gamemode/policy.py. Never judges the program itself
+│   └── launcher.py   Re-parses, re-checks, launches the vendor's own
+│                     UninstallString unelevated. No ledger row — not
+│                     PolyScour's mutation to record
 ├── scheduling/
 │   ├── consent.py    Canonical rule digest + POLICY_VERSION check — THE
 │   │                 AUTHORITY for "does this schedule's consent still
@@ -119,8 +133,9 @@ src/polyscour/
 │   └── runner.py     --scheduled-clean <id>: check, check, check, scan,
 │                     plan(dry_run=False), execute — allow_elevation is
 │                     never passed True, not merely checked and refused
-└── views/            dashboard, clean, storage, gamemode, startup, history,
-                      settings (schedules live in Settings, not their own view)
+└── views/            dashboard, clean, storage, gamemode, startup, uninstall,
+                      history, settings (schedules live in Settings, not
+                      their own view)
 rules/cleaners/*.json  Data only. Never executable, never authority.
 tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.

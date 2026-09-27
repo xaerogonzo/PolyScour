@@ -17,6 +17,7 @@ import threading
 
 import pytest
 
+from polyscour.cleaning import recyclebin
 from polyscour.cleaning.executor import Executor
 from polyscour.cleaning.planner import plan
 from polyscour.contracts import (
@@ -416,3 +417,107 @@ def test_a_restored_operation_stops_being_undoable(executor, dumps_root):
     executor.restore(result.operation_id)
 
     assert executor.ledger.undoable() == []
+
+
+# ══ The Recycle Bin: a Shell operation, not a file-glob rule ══════════════════
+#
+# Never touches a real Recycle Bin. `recyclebin.query`/`recyclebin.empty` are
+# monkeypatched at the module level the executor calls through, the same
+# `polyscour.cleaning.recyclebin` object `Executor` imports.
+
+def _recycle_bin_finding(volume: str = "C:\\") -> Finding:
+    from pathlib import Path
+    return Finding(rule_id=recyclebin.RULE_ID, title=f"Recycle Bin on {volume}",
+                  path=Path(volume), size_bytes=3_800_000_000,
+                  risk=RiskLevel.MODERATE, reversible=False,
+                  evidence=Evidence("SHQueryRecycleBinW", "1,842 item(s)", "r"))
+
+
+def test_recycle_bin_is_never_authorised_through_the_guard(executor, monkeypatch):
+    """There is no `PolicyEntry` for `recycle-bin`; reaching `entry_for` for it
+    would raise `PolicyViolation`. This asserts that path is never taken."""
+    monkeypatch.setattr(recyclebin, "query",
+                        lambda v: recyclebin.RecycleBinInfo(v, 12, 400))
+    result = executor.execute(plan([_recycle_bin_finding()], dry_run=True))
+    assert result.outcome is OperationOutcome.SUCCESS
+    assert result.items_completed == 1
+
+
+def test_recycle_bin_dry_run_reports_without_emptying(executor, monkeypatch):
+    calls = []
+    monkeypatch.setattr(recyclebin, "query",
+                        lambda v: recyclebin.RecycleBinInfo(v, 1842, 3_800_000_000))
+    monkeypatch.setattr(recyclebin, "empty", lambda v: calls.append(v) or True)
+
+    result = executor.execute(plan([_recycle_bin_finding()], dry_run=True))
+
+    assert calls == []                      # empty() never called on a rehearsal
+    assert result.dry_run is True
+    assert result.items_completed == 1
+    assert result.bytes_freed == 3_800_000_000
+
+
+def test_recycle_bin_dry_run_on_an_already_empty_bin(executor, monkeypatch):
+    monkeypatch.setattr(recyclebin, "query",
+                        lambda v: recyclebin.RecycleBinInfo(v, 0, 0))
+    result = executor.execute(plan([_recycle_bin_finding()], dry_run=True))
+    assert result.items_completed == 0
+    assert result.skips[0].reason is SkipReason.VANISHED
+
+
+def test_recycle_bin_real_run_empties_and_reports_bytes_freed(executor, monkeypatch):
+    responses = iter([
+        recyclebin.RecycleBinInfo("C:\\", 1842, 3_800_000_000),   # before
+        recyclebin.RecycleBinInfo("C:\\", 0, 0),                  # after
+    ])
+    monkeypatch.setattr(recyclebin, "query", lambda v: next(responses))
+    monkeypatch.setattr(recyclebin, "empty", lambda v: True)
+
+    result = executor.execute(plan([_recycle_bin_finding()], dry_run=False))
+
+    assert result.outcome is OperationOutcome.SUCCESS
+    assert result.items_completed == 1
+    assert result.bytes_freed == 3_800_000_000
+
+
+def test_recycle_bin_remainder_is_its_own_outcome(executor, monkeypatch):
+    """A bin the Shell reported success on but that still has something in it
+    afterward is SUCCESS_WITH_UNEXPECTED_REMAINDER, not silent success -- there
+    is no single failed item to blame, only the bin's own before/after figures.
+    """
+    responses = iter([
+        recyclebin.RecycleBinInfo("C:\\", 1842, 3_800_000_000),   # before
+        recyclebin.RecycleBinInfo("C:\\", 3, 900),                # after: a remainder
+    ])
+    monkeypatch.setattr(recyclebin, "query", lambda v: next(responses))
+    monkeypatch.setattr(recyclebin, "empty", lambda v: True)
+
+    result = executor.execute(plan([_recycle_bin_finding()], dry_run=False))
+
+    assert result.outcome is OperationOutcome.SUCCESS_WITH_UNEXPECTED_REMAINDER
+    assert result.bytes_freed == 3_800_000_000 - 900
+    assert any(s.reason is SkipReason.LOCKED for s in result.skips)
+
+
+def test_recycle_bin_a_shell_failure_to_empty_is_not_benign(executor, monkeypatch):
+    monkeypatch.setattr(recyclebin, "query",
+                        lambda v: recyclebin.RecycleBinInfo(v, 1842, 3_800_000_000))
+    monkeypatch.setattr(recyclebin, "empty", lambda v: False)
+
+    result = executor.execute(plan([_recycle_bin_finding()], dry_run=False))
+
+    assert result.items_completed == 0
+    assert result.outcome is OperationOutcome.FAILED
+    assert any(s.reason is SkipReason.ERROR for s in result.skips)
+
+
+def test_recycle_bin_already_empty_is_skipped_not_emptied(executor, monkeypatch):
+    calls = []
+    monkeypatch.setattr(recyclebin, "query",
+                        lambda v: recyclebin.RecycleBinInfo(v, 0, 0))
+    monkeypatch.setattr(recyclebin, "empty", lambda v: calls.append(v) or True)
+
+    result = executor.execute(plan([_recycle_bin_finding()], dry_run=False))
+
+    assert calls == []
+    assert result.skips[0].reason is SkipReason.VANISHED
