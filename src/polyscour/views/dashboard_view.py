@@ -157,13 +157,29 @@ class DashboardView(ctk.CTkFrame):
             return
         self.polyshield.grid(row=2, column=0, sticky="nsew",
                              padx=(20, 8), pady=8)
-        age = posture.intel_age_days
-        detail = "Real-time protection is running." if posture.watcher_running \
-            else "Installed; real-time protection is off."
-        if age is not None:
-            detail += f" Threat intelligence is {age} day{'s' if age != 1 else ''} old."
+
+        lines = ["Real-time protection is running." if posture.watcher_running
+                else "Installed; real-time protection is off."]
+
+        if posture.process_monitor_running is not None:
+            lines.append("Process monitoring is running."
+                        if posture.process_monitor_running
+                        else "Process monitoring is off.")
+
+        enabled = posture.intel_feeds_enabled
+        attention = posture.intel_feeds_stale_or_error
+        if enabled is not None:
+            if enabled == 0:
+                lines.append("No threat-intelligence feeds are enabled.")
+            elif attention:
+                lines.append(f"{attention} of {enabled} threat-intelligence "
+                            f"feed{'s' if enabled != 1 else ''} need attention.")
+            else:
+                lines.append(f"All {enabled} threat-intelligence "
+                            f"feed{'s' if enabled != 1 else ''} up to date.")
+
         self.polyshield.set("Protected" if posture.watcher_running else "Installed",
-                            detail)
+                            " ".join(lines))
 
     # ── on the UI thread ─────────────────────────────────────────────────────
 

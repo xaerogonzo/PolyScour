@@ -8,13 +8,24 @@ Three questions, and no more
 ----------------------------
 
     is_available()      PING
-    security_posture()  STATUS
-    intel_freshness()   GET_INTEL_STATUS
+    security_posture()  STATUS, GET_INTEL_STATUS
 
-Richer capabilities -- ``SCAN_PATH``, hash reputation, shared quarantine -- get
-added only when a concrete, committed feature needs them. ``SCAN_PATH`` does not
-exist on PolyShield's service today, and inventing it now would mean building an
-IPC API before anything consumes it.
+Richer capabilities -- a path-level query, hash reputation, shared quarantine --
+get added only when a concrete, committed feature needs them. None of them
+exist on PolyShield's service today, and inventing one now would mean building
+an IPC API before anything consumes it.
+
+``security_posture()`` reads only fields ``STATUS`` and ``GET_INTEL_STATUS``
+already return -- confirmed against PolyShield's own handlers
+(``polyshield_service.py``, ``_build_status``/``_build_intel_status``), not
+guessed. Notably, ``GET_INTEL_STATUS`` has never had an ``age_days`` field: its
+real shape is a ``feeds`` mapping, each entry carrying PolyShield's own
+freshness classification (``never`` / ``fresh`` / ``aging`` / ``stale`` /
+``error`` / ``auth_required``) rather than a bare number of days. An earlier
+version of this module read a field that PolyShield never sent, so
+``intel_age_days`` was silently always ``None``; ``intel_feeds_enabled`` and
+``intel_feeds_stale_or_error`` replace it, built from feed states PolyShield
+already computed rather than PolyScour inventing its own age arithmetic.
 
 localhost is not a trust boundary
 ---------------------------------
@@ -101,13 +112,34 @@ def _send(cmd: str, timeout: float = _CMD_TIMEOUT) -> dict | None:
     return reply if isinstance(reply, dict) else None
 
 
+#: Feed states PolyShield's own classification treats as needing attention.
+#: Not PolyScour inventing a severity ordering from raw ages -- these are the
+#: exact words ``intel_updater.get_staleness()`` already uses, just filtered.
+_FEED_NEEDS_ATTENTION = {"stale", "error", "auth_required"}
+
+
 @dataclass(frozen=True)
 class Posture:
     """What the dashboard tile renders. Every field optional and honest."""
     available: bool
     realtime_protection: bool | None = None
     watcher_running: bool | None = None
-    intel_age_days: int | None = None
+    #: PolyShield's separate process-behaviour monitor. Distinct from the
+    #: filesystem watcher: a machine can have one running without the other.
+    process_monitor_running: bool | None = None
+    #: The scheduled background updater thread, from STATUS. Whether an
+    #: update is actively in flight right now is a separate, narrower fact
+    #: (GET_INTEL_STATUS's own ``running_now``) this tile does not surface --
+    #: "is it kept up to date" matters more here than "is it updating this
+    #: instant".
+    intel_updater_running: bool | None = None
+    #: None means "PolyShield did not answer with a readable feed list", never
+    #: "zero feeds" -- those are different facts. Zero is a real, sayable
+    #: value (no feed enabled at all).
+    intel_feeds_enabled: int | None = None
+    intel_feeds_stale_or_error: int | None = None
+    events_count: int | None = None
+    uptime_seconds: int | None = None
     detail: str = ""
 
 
@@ -115,6 +147,23 @@ def is_available() -> bool:
     """Whether PolyShield's service is present, running and answering us."""
     reply = _send("PING")
     return bool(reply) and reply.get("ok") is True
+
+
+def _feed_summary(intel: dict) -> tuple[int | None, int | None]:
+    """(enabled feed count, of those needing attention) from GET_INTEL_STATUS.
+
+    ``feeds`` is keyed by feed name; each entry carries ``enabled`` and
+    PolyShield's own ``state``. Anything not shaped as expected -- absent,
+    not a dict -- yields ``(None, None)``: unreadable, not "no feeds".
+    """
+    feeds = intel.get("feeds")
+    if not isinstance(feeds, dict):
+        return None, None
+    enabled = [f for f in feeds.values()
+              if isinstance(f, dict) and f.get("enabled")]
+    needs_attention = sum(1 for f in enabled
+                          if f.get("state") in _FEED_NEEDS_ATTENTION)
+    return len(enabled), needs_attention
 
 
 def security_posture() -> Posture:
@@ -128,20 +177,21 @@ def security_posture() -> Posture:
         return Posture(available=False, detail="PolyShield is not running.")
 
     intel = _send("GET_INTEL_STATUS") or {}
+    feeds_enabled, feeds_needing_attention = _feed_summary(intel)
+    watcher = _as_bool(reply.get("watcher_running"))
 
     return Posture(
         available=True,
-        realtime_protection=_as_bool(reply.get("watcher_running")),
-        watcher_running=_as_bool(reply.get("watcher_running")),
-        intel_age_days=_as_int(intel.get("age_days")),
+        realtime_protection=watcher,
+        watcher_running=watcher,
+        process_monitor_running=_as_bool(reply.get("process_monitor_running")),
+        intel_updater_running=_as_bool(reply.get("intel_updater_running")),
+        intel_feeds_enabled=feeds_enabled,
+        intel_feeds_stale_or_error=feeds_needing_attention,
+        events_count=_as_int(reply.get("events_count")),
+        uptime_seconds=_as_int(reply.get("uptime_seconds")),
         detail="PolyShield is running.",
     )
-
-
-def intel_freshness() -> int | None:
-    """Age in days of PolyShield's threat intelligence, if it will tell us."""
-    reply = _send("GET_INTEL_STATUS")
-    return _as_int(reply.get("age_days")) if reply else None
 
 
 def _as_bool(value) -> bool | None:

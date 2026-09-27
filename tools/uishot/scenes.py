@@ -141,11 +141,15 @@ def dashboard(session):
         "recent_patches": [{"kb": "KB5121003", "installed_on": "2026-08-13"}],
     })
     view._render_polyshield(type("P", (), {
-        "available": False, "watcher_running": None, "intel_age_days": None})())
+        "available": False, "watcher_running": None,
+        "process_monitor_running": None, "intel_feeds_enabled": None,
+        "intel_feeds_stale_or_error": None})())
     session.shot("dashboard_no_polyshield")
 
     view._render_polyshield(type("P", (), {
-        "available": True, "watcher_running": True, "intel_age_days": 2})())
+        "available": True, "watcher_running": True,
+        "process_monitor_running": True, "intel_feeds_enabled": 4,
+        "intel_feeds_stale_or_error": 1})())
     session.shot("dashboard_with_polyshield")
 
 
