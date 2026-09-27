@@ -107,8 +107,20 @@ src/polyscour/
 │   ├── service.py    veto -> ledger -> registry (or helper), and the undo
 │   └── inventory.py  READ-ONLY: folders, RunOnce, logon/boot tasks, services.
 │                     No writer, no switch (adr/0011). Unread != none found
-└── views/            dashboard, clean, storage, gamemode, startup, history,
-                      settings
+├── uninstall/
+│   ├── inventory.py  READ-ONLY: HKLM/HKLM_WOW6432/HKCU ...\Uninstall\*.
+│   │                 No removal logic; SystemComponent=1 hidden, Windows'
+│   │                 own convention. Sorted by size — no "last used" signal
+│   ├── command.py    UninstallString -> UninstallCommand via
+│   │                 CommandLineToArgvW. No shell=True, ever
+│   ├── policy.py     veto() — can this be launched unelevated and
+│   │                 unambiguously? THE AUTHORITY, same shape as safety/
+│   │                 and gamemode/policy.py. Never judges the program itself
+│   └── launcher.py   Re-parses, re-checks, launches the vendor's own
+│                     UninstallString unelevated. No ledger row — not
+│                     PolyScour's mutation to record
+└── views/            dashboard, clean, storage, gamemode, startup, uninstall,
+                      history, settings
 rules/cleaners/*.json  Data only. Never executable, never authority.
 tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.

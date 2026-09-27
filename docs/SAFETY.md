@@ -406,6 +406,45 @@ The write is then **read back**. `SetValueEx` returning without error is not
 evidence the value is what was asked for, and "verify rather than assume" is
 what the cleaning path already does when it re-scans afterwards.
 
+## 11. Uninstall: a fourth policy, for launching a command rather than changing one
+
+Launching a program's registered uninstaller is neither a filesystem operation
+nor a registry write, so it runs through neither the guard chain nor
+`startup/policy.py`. It gets its own authority in `uninstall/policy.py`, the
+same shape as the other three: **the registry proposes a command, reviewed
+code decides whether PolyScour may launch it.**
+
+The question is deliberately narrow and mechanical — *can this be launched
+unelevated and unambiguously* — never *should this program be removed*.
+`uninstall/policy.veto()` refuses exactly three things:
+
+| Refusal | Covers |
+|---|---|
+| The command could not be parsed | `uninstall/command.parse()` returned `None` — `CommandLineToArgvW` itself could not tokenise the registered string |
+| The executable's own file name is on `_NEVER_LAUNCH` | PolyScour will not launch itself, the same "named, not detected" choice `startup/policy.py` makes for its own autorun entry |
+| `NoRemove` is set | Windows itself records this program as not removable |
+
+Nothing here judges the program being removed. A large, rarely-used, or
+unfamiliar-publisher program is listed identically to any other — sorted by
+size because size is a fact, never because it implies which program is worth
+removing.
+
+**The safety-relevant step is command parsing, not deletion.** There is
+nothing here for a vault or a ledger to hold — PolyScour does not delete
+anything itself, and the vendor's own uninstaller is not a PolyScour
+mutation to record. What stands in for "never force" and "authorise twice"
+here is `docs/adr/0013`: `UninstallString` is tokenised with
+`CommandLineToArgvW`, the same way `CreateProcess` itself would, and launched
+as an argv list with `shell=False` — never joined back into a string and
+handed to a shell, which would let a string containing `&` or `|` run more
+than the one program it claims to be.
+
+`uninstall/policy.evaluate()` is checked once when a row is drawn (so a
+button can be disabled with its reason shown) and again immediately before
+`uninstall/launcher.launch()` calls `Popen` — the registry value or the file
+on disk can change between the two, the same race `guard.authorize()` and
+Game Mode's `veto()` both close by checking twice.
+
 ## What is tested
 
 `tests/test_safety.py` and `tests/test_executor.py`, in full:

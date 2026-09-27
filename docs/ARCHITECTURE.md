@@ -372,6 +372,41 @@ Tasks and services whose programs all live inside the Windows folder are
 counted, not listed (a location, not a verdict; ADR 0011 Decision 3). Anything
 unreadable stays in the list.
 
+## Uninstall
+
+The third feature outside the cleaning pipeline. Unlike the Startup Manager,
+it writes nothing of its own — it reads the registry's `Uninstall` keys and
+launches whatever a program already registered there, the same shape as
+Control Panel's own Programs and Features.
+
+```
+uninstall/inventory.py   read-only: HKLM / HKLM_WOW6432 / HKCU ...\Uninstall\*
+        |
+uninstall/command.py     UninstallString -> UninstallCommand (CommandLineToArgvW)
+        |
+uninstall/policy.py      may this be launched, unelevated, unambiguously?
+        |
+uninstall/launcher.py    re-parse, re-check, subprocess.Popen(argv, shell=False)
+```
+
+`policy.evaluate()` pairs `command.parse()` with `policy.veto()` in one place
+so the view (which shows the refusal reason) and the launcher (which acts on
+it) can never disagree about what a program's registered command parses to.
+
+**No `ActionResult`, no ledger row.** Every other destructive-shaped feature
+in this codebase ends in `ledger.record()` because PolyScour did something
+reversible or not. Launching a vendor's uninstaller is neither — PolyScour
+does not know what it does, cannot verify it, and the vendor's own uninstaller
+is not a PolyScour operation to record. `uninstall/launcher.py`'s `LaunchResult`
+says only whether the launch itself succeeded, never what happened after.
+
+**Command parsing, not deletion, is the safety-relevant step here.**
+`safety/policy.py`'s discipline — a rule cannot smuggle in an unauthorised
+path — has an analogue for a command line: `UninstallString` is arbitrary and
+untrusted, so it is tokenised with `CommandLineToArgvW` (the same tokenizer
+`CreateProcess` uses) and launched as an argv list, never joined back into a
+string and handed to a shell. `docs/adr/0013` has the reasoning.
+
 ## Two lifetimes: resource and data
 
     RESOURCE   ships with the build, read-only, may sit in a temporary
