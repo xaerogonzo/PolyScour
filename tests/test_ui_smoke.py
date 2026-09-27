@@ -54,7 +54,7 @@ def app(isolated):
 def test_the_shell_builds(app):
     assert app.title() == "PolyScour"
     assert set(app._nav_buttons) == {"dashboard", "clean", "storage", "game",
-                                     "startup", "history", "settings"}
+                                     "startup", "uninstall", "history", "settings"}
 
 
 def test_the_dashboard_is_what_opens_and_is_the_only_page_built(app):

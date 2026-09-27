@@ -176,7 +176,7 @@ the answer is. It is a link, not a claim about what is on your disk.
 ## What it deliberately does not do yet
 
 Driver management, registry cleaning, secure wipe, duplicate finder,
-uninstaller, WinGet updater, browser extension manager, cloud-drive cleaner,
+WinGet updater, browser extension manager, cloud-drive cleaner,
 process explorer, service manager, scheduled cleaning, CLI, portable mode,
 Recycle Bin.
 
@@ -188,6 +188,33 @@ that rather than leaving it as an omission.
 
 The strongest part of this project is what it refuses to build. The shared
 substrate and one trustworthy cleaner come first.
+
+## Uninstall
+
+What Windows recorded as installed, and a button that starts each program's
+own uninstaller. **PolyScour does not remove programs itself** — no deleted
+files, no deleted registry keys, no idea of what a program's "leftovers" are.
+That is exactly the judgement call a duplicate finder would also need and
+that this project has already declined above.
+
+"Run Uninstaller" launches the exact command Windows' own Programs and
+Features would — the program's registered `UninstallString`, split the same
+way `CreateProcess` itself would (`CommandLineToArgvW`, never a shell). A
+quiet/unattended variant some installers register (`QuietUninstallString`) is
+recorded but never used by this button: it means something different from
+"run the program's own uninstaller," which is the one thing this screen
+promises.
+
+PolyScour launches it unelevated and then steps out of the way — it does not
+elevate itself to start it, does not wait for it, and does not track what it
+does afterward. The vendor's own uninstaller may still ask Windows for
+administrator rights through its own prompt, exactly as if you had launched
+it from Control Panel yourself.
+
+Sorted by size, because size is a fact — not because a large program is more
+worth removing than a small one, and there is no "recommended" set here
+either. A command PolyScour cannot parse and launch unambiguously is shown
+disabled with the reason, never silently hidden or guessed at.
 
 ## Administrator rights
 
