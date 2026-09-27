@@ -272,6 +272,38 @@ which is the opposite of what supervising requires. What the helper established
 is the precedent: a second process gets a threat-model section written before
 its code.
 
+## 10. The Recycle Bin: a third authority, for a Shell operation rather than a path
+
+Emptying the Recycle Bin is not a filesystem operation either, so it does not
+run through the guard chain above, and it is not a `RootFamily` — there is no
+`PolicyEntry` for `recycle-bin` in `POLICY`, and calling `entry_for("recycle-bin")`
+raises `PolicyViolation` deliberately. `cleaning/executor.py` recognises the
+rule id and routes it to `cleaning/recyclebin.py` *before* the generic
+per-finding path ever calls `entry_for`.
+
+Its authority is the Shell API itself: `SHQueryRecycleBinW` and
+`SHEmptyRecycleBinW` operate only on the current user's own Recycle Bin, which
+needs no further permission check, the same way emptying it from Explorer
+needs none. `$Recycle.Bin\<SID>` is never opened, walked or unlinked as an
+ordinary directory — doing so would risk corrupting the index those two Shell
+calls maintain, especially if a run were interrupted partway by a locked item.
+
+Two things this operation does that no `RootFamily` rule does:
+
+- Its own `RiskLevel` is `MODERATE` and `reversible=False`, not `SAFE` — the
+  Recycle Bin providing recovery for a prior deletion is not the same consent
+  as permanently destroying that recovery path, and `planner.recommend()`
+  correspondingly never pre-ticks it.
+- The executor re-queries `SHQueryRecycleBinW` immediately after
+  `SHEmptyRecycleBinW` reports success, and compares the before/after item
+  count and bytes. A nonzero remainder — most likely a locked item — becomes
+  `OperationOutcome.SUCCESS_WITH_UNEXPECTED_REMAINDER` rather than a silent
+  `SUCCESS`, because there is no single failed `Finding` a `Skip` could point
+  at to explain it; only the bin's own before/after figures do.
+
+`docs/adr/0012` has the full reasoning, including why this earned its own
+execution path rather than a new `RootFamily`.
+
 That section was written first — `THREAT_MODEL.md`, "The Game Mode
 supervisor", plus T20–T22 — and `gamemode/supervisor.py` was built to it. It
 commits to three things:
