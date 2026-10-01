@@ -40,6 +40,7 @@ import os
 import subprocess
 
 from polybedrock.ps_run import run_ps
+from polybedrock.schtasks_run import run_schtasks
 
 _TASK_FOLDER = "PolyScour"
 _TIMEOUT_S = 30
@@ -79,10 +80,7 @@ def _task_path_and_name(schedule_id: str) -> tuple[str, str]:
 
 
 def _run_schtasks(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [_schtasks_exe(), *args], capture_output=True, shell=False,
-        timeout=_TIMEOUT_S,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False)
+    return run_schtasks(args, exe=_schtasks_exe(), timeout=_TIMEOUT_S)
 
 
 def _quote_if_needed(token: str) -> str:
