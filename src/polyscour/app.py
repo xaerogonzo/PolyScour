@@ -55,6 +55,11 @@ _NAV = [
 ]
 
 
+def _path_checks_on() -> bool:
+    """Read per question, so toggling the setting needs no restart."""
+    return bool(cfg.get("polyshield_path_checks"))
+
+
 class Services:
     """Everything the views share, built once.
 
@@ -66,10 +71,11 @@ class Services:
         exclusions = [Path(p) for p in (cfg.get("exclusions") or [])]
         # Optional and refuse-only: with no PolyShield every question is
         # UNKNOWN and the guard behaves exactly as it always did.
-        self.guard = Guard(exclusions=exclusions, advisor=PathAdvisor())
+        self.guard = Guard(exclusions=exclusions,
+                           advisor=PathAdvisor(enabled=_path_checks_on))
         # A second advisor for the read-only screens' labels. Its own
         # cache, so a Storage render never shares state with a clean's.
-        self.annotator = PathAdvisor()
+        self.annotator = PathAdvisor(enabled=_path_checks_on)
         self.vault = Vault(paths.vault_dir())
         self.ledger = Ledger(paths.ledger_path())
         # Its own file, not the ledger: a scan did nothing to this machine, and

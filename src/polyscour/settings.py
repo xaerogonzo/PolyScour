@@ -35,6 +35,12 @@ DEFAULTS: dict = {
 
     # Integrations
     "polyshield_tile_enabled": True,
+    #: Whether PolyScour asks PolyShield about paths -- before cleaning, and for
+    #: the labels on Storage and Startup. On by default because it can only ever
+    #: make a clean do less. Off is exactly "PolyShield is not installed". It
+    #: cannot reach the elevated helper: a switch passed in a request would
+    #: *widen* what is deleted, which a helper input may never do (adr/0015).
+    "polyshield_path_checks": True,
 }
 
 _impl.configure(paths.config_dir() / "settings.json", DEFAULTS)

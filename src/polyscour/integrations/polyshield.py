@@ -309,7 +309,13 @@ class PathAdvisor:
     matters rather than to its size.
     """
 
-    def __init__(self, ask=None) -> None:
+    def __init__(self, ask=None, enabled=None) -> None:
+        #: The person's switch (``polyshield_path_checks``), as a callable so
+        #: it is read at the moment of each question and a change takes effect
+        #: immediately. ``None`` means always on. When it says no, nothing is
+        #: asked and the answer is UNKNOWN -- which, by design, blocks and
+        #: clears nothing, so "off" is exactly "PolyShield is not installed".
+        self._enabled = enabled
         #: Injected by tests; ``None`` resolves ``_ask_path`` at call time so
         #: patching the module attribute works too.
         self._ask = ask
@@ -326,6 +332,8 @@ class PathAdvisor:
 
     def status(self, path: Path | str) -> PathStatus:
         key = os.path.normcase(str(path))
+        if self._enabled is not None and not self._enabled():
+            return UNKNOWN_PATH
         hit = self._cache.get(key)
         if hit is not None:
             return hit

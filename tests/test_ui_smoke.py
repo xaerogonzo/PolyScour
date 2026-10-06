@@ -998,3 +998,32 @@ def test_startup_notes_add_labels_and_change_nothing_else(app, monkeypatch):
     assert "PolyShield monitors this location" in notes
     assert "PolyShield has a recorded detection for this file" in notes
     assert noisy == silent          # same rows, same order, same switch state
+
+
+def test_the_polyshield_switch_is_in_settings_and_writes_the_setting(app):
+    from polybedrock import settings as cfg
+
+    app.navigate("settings")
+    view = app.get_view("settings")
+
+    def find(widget):
+        for child in widget.winfo_children():
+            if isinstance(child, ctk.CTkCheckBox) and \
+                    child.cget("text") == "Ask PolyShield about paths":
+                return child
+            hit = find(child)
+            if hit is not None:
+                return hit
+        return None
+
+    box = find(view)
+    assert box is not None, "the PolyShield checkbox is not on the Settings screen"
+    before = bool(cfg.get("polyshield_path_checks"))
+    assert before is True                        # on by default
+    try:
+        box.toggle()
+        assert cfg.get("polyshield_path_checks") is (not before)
+        box.toggle()
+        assert cfg.get("polyshield_path_checks") is before
+    finally:
+        cfg.set_value("polyshield_path_checks", before)

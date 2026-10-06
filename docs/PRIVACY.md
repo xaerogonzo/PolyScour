@@ -91,8 +91,14 @@ PolyShield's own design, so it does not prove who is listening: a different
 program that bound the port while PolyShield was not running would be sent the
 same questions. That is stated rather than hidden because PolyScour cannot
 close it from inside; the effect of a forged *answer* is limited to PolyScour
-doing less (`docs/THREAT_MODEL.md` T33). You can switch the questions off by
-not installing PolyShield; nothing else in PolyScour needs them.
+doing less (`docs/THREAT_MODEL.md` T33). **Settings → PolyShield → Ask PolyShield
+about paths** switches them off (it takes effect immediately, no restart), and with
+it off PolyScour asks nothing and behaves as if PolyShield were not installed.
+One exception, because it is the only way the switch could be safe: the
+elevated step that clears `C:\Windows\Temp` cannot read your settings, and a
+switch handed to it in a request could only widen what it deletes, which nothing
+sent to it is allowed to do. It still asks, but only if PolyShield's token is on
+disk and something is answering.
 
 There is no update check, no rule download, no crash reporter, no analytics, no
 account, and no advertising identifier.

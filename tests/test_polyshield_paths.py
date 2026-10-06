@@ -532,3 +532,43 @@ def test_a_detection_over_a_real_socket_withholds_exactly_that_file(
     # root, d1, and its files -- plus the three other directories: far fewer
     # than one per file would be, and bounded by the flagged chain.
     assert len(svc.paths_asked) < 20
+
+
+# ══ the person's switch ═══════════════════════════════════════════════════════
+
+def test_a_disabled_advisor_asks_nothing_and_knows_nothing():
+    asked = []
+    advisor = PathAdvisor(lambda p: asked.append(p) or PathStatus(True, True),
+                          enabled=lambda: False)
+
+    assert advisor.status(r"C:\a") == UNKNOWN_PATH
+    assert advisor.flagged_within(ROOT, ROOT / "x" / "y") is None
+    assert asked == [] and advisor.queries == 0
+
+
+def test_the_switch_is_read_at_each_question_so_no_restart_is_needed():
+    on = [False]
+    asked = []
+    advisor = PathAdvisor(lambda p: asked.append(p) or PathStatus(False, True),
+                          enabled=lambda: on[0])
+
+    assert advisor.status(r"C:\a") == UNKNOWN_PATH
+    on[0] = True
+    assert advisor.status(r"C:\a").flagged is True       # asked now
+    on[0] = False
+    assert advisor.status(r"C:\b") == UNKNOWN_PATH       # and off again
+    assert asked == [r"C:\a"]
+
+
+def test_off_is_the_same_as_polyshield_not_being_there(service, monkeypatch, tmp_path):
+    """The promise in the Settings text: with the switch off the scan is what it
+    would be with no PolyShield at all, even with one running and flagging."""
+    root = tmp_path / "scan-temp"
+    svc = service(detections=[root / "d1" / "f5.tmp"])
+
+    files, result = _scan_a_temp_tree(monkeypatch, tmp_path,
+                                      PathAdvisor(enabled=lambda: False))
+
+    assert len(result.findings) == 20
+    assert result.outcomes[0].withheld_by_polyshield == 0
+    assert svc.seen == []                                # not one question

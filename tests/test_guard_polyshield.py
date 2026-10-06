@@ -383,3 +383,71 @@ def test_the_single_path_operation_asks_too(temp_root, monkeypatch):
 
     assert response.ok is False and response.refused_by == "guard"
     assert bad.exists()
+
+
+# ══ the switch reaches everything that runs as the user ═══════════════════════
+
+def test_the_app_wires_one_switch_into_both_of_its_advisors(monkeypatch, tmp_path):
+    from polyscour import app as app_module
+
+    monkeypatch.setenv("POLYSCOUR_DATA_DIR", str(tmp_path / "data"))
+    services = app_module.Services()
+
+    assert services.guard._advisor._enabled is app_module._path_checks_on
+    assert services.annotator._enabled is app_module._path_checks_on
+
+
+@pytest.mark.parametrize("setting", [True, False])
+def test_the_apps_guard_follows_the_setting(monkeypatch, tmp_path, temp_root, setting):
+    """Real ``Services``, real setting, a PolyShield that flags everything."""
+    from polyscour import app as app_module
+
+    monkeypatch.setenv("POLYSCOUR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(app_module.cfg, "get",
+                        lambda key, *a: setting if key == "polyshield_path_checks" else [])
+    monkeypatch.setattr(polyshield, "_ask_path", lambda p: PathStatus(False, True))
+    [f] = make(temp_root, ["a.tmp"])
+
+    guard = app_module.Services().guard
+    guard.begin()
+    if setting:
+        with pytest.raises(PolyShieldFlagged):
+            guard.authorize("user-temp", f, _delete())
+    else:
+        assert guard.authorize("user-temp", f, _delete()) == f
+
+
+def test_the_scheduled_runner_builds_its_guard_with_the_same_switch(monkeypatch, tmp_path):
+    import polyscour.safety.guard as guard_module
+    from polyscour import settings as cfg
+    from polyscour.scheduling import consent, runner, store, task
+    from polyscour.scheduling.consent import Frequency, Schedule, Trigger, VerifyResult
+
+    monkeypatch.setenv("POLYSCOUR_DATA_DIR", str(tmp_path))
+    sched = Schedule(id="s1", enabled=True, trigger=Trigger(Frequency.DAILY, "03:00"),
+                     rule_ids=("user-temp",), rule_definition_hashes={"user-temp": "a"},
+                     policy_version=1, maximum_risk=RiskLevel.LOW,
+                     elevation_allowed=False, created_by_user=True,
+                     created_at="2026-01-01T00:00:00+00:00", task_name="x")
+    monkeypatch.setattr(store, "get", lambda sid: sched)
+    monkeypatch.setattr(task, "verify", lambda sid: (True, ""))
+    monkeypatch.setattr(consent, "verify", lambda s: VerifyResult(("user-temp",), {}))
+
+    built = []
+    real_guard = guard_module.Guard
+    monkeypatch.setattr(guard_module, "Guard",
+                        lambda **kw: built.append(kw) or real_guard(**kw))
+    from polyscour.cleaning import scanner as scanner_module
+    from polyscour.contracts import ScanResult
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(scanner_module.Scanner, "scan",
+                        lambda self, rules, cancel: ScanResult(now, now))
+
+    runner.run("s1")
+
+    gate = built[0]["advisor"]._enabled
+    monkeypatch.setattr(cfg, "get", lambda key, *a: False)
+    assert gate() is False
+    monkeypatch.setattr(cfg, "get", lambda key, *a: True)
+    assert gate() is True

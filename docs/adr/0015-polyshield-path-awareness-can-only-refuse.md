@@ -125,6 +125,21 @@ rows on screen (Storage shows 12 per list), in one background pass after
 drawing. The text export is unchanged: a label is live state, not part of what a
 scan found.
 
+## Decision 6 — A switch, which cannot reach the helper
+
+`polyshield_path_checks` (Settings → PolyShield, on by default) turns off every question
+asked as the user: the GUI's guard, scheduled runs, and the Storage and Startup labels.
+`PathAdvisor` takes it as a callable and reads it per question, so it applies
+immediately and off is *exactly* UNKNOWN — the same as PolyShield being absent, which
+Decision 1 already guarantees is safe. It is not a separate code path.
+
+**It does not reach the elevated helper, and cannot.** Disabling the check *widens*
+what a clean may delete, and a helper input may only narrow — an off-switch carried
+in a request is exactly what a compromised GUI would send. The helper also cannot read
+the user's settings (CLAUDE.md: its `%LOCALAPPDATA%` need not be the same profile). So
+the `windows-temp` step still asks. The Settings text and PRIVACY.md say so, rather
+than let an off switch imply more than it does.
+
 ## Consequences
 
 - `integrations/polyshield.py` grew from three read-only commands to four; a
@@ -139,9 +154,9 @@ scan found.
 - Rejected: **blocking when PolyShield is absent or silent** (a hidden hard
   dependency); **treating `flagged: false` as a clearance** (the log is capped);
   **a per-file query** (301 questions for 300 files); **a time-to-live or
-  file-identity cache** (an operation-scoped cache needs neither); **a setting
-  to turn it off** (not added; with no PolyShield it is already inert, and a
-  switch is one more thing to be wrong — revisit if someone asks).
+  file-identity cache** (an operation-scoped cache needs neither); **no way to turn it off** (first draft: with no PolyShield it is inert, so a
+  switch seemed unneeded — but it is the only control over *whether paths are
+  sent*, and that deserved a person's say).
 - Not covered: a detection recorded after the second guard call and before the
   `unlink` (a window of microseconds), and any path PolyShield's capped log has
   already forgotten. T31.

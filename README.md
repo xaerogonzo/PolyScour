@@ -493,6 +493,13 @@ Three things worth knowing about what that does and does not mean:
   event log, so a file with no flag has only been *not recorded*. PolyScour
   never words it as a clearance.
 
+**Settings → PolyShield → Ask PolyShield about paths** turns all of this off, taking
+effect immediately. Off means exactly "PolyShield is not installed": nothing is
+asked and PolyScour carries on under its own safety rules. The one thing it does
+not reach is the administrator step that clears `C:\Windows\Temp`, which cannot
+read your settings — and a switch passed to it in a request could only ever
+*widen* what it deletes, which nothing sent to that process is allowed to do.
+
 On the Storage and Startup screens a row may carry one dim line — *PolyShield
 monitors this location*, or *has a recorded detection in or beneath this
 folder*. It is a fact, in PolyShield's terms, and nothing else: it does not

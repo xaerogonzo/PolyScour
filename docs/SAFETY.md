@@ -513,6 +513,11 @@ too old to know the command: the chain's own verdict stands, exactly as before
 PolyShield existed. And `flagged: false` is **not** a clearance — PolyShield
 answers from a capped event log, so it means "no recorded detection".
 
+**The person's switch** (`polyshield_path_checks`, Settings → PolyShield) turns off every
+question asked as the user, immediately; off is exactly UNKNOWN. It cannot reach the
+elevated helper: turning the check off *widens* what is deleted, and a helper input
+may only narrow.
+
 **Off unless someone turns it on.** `Guard(advisor=None)` is the default, so no
 bare `Guard()` ever opens a socket. Four places pass an advisor, each in one
 line: `Services`, `scheduling/runner.py` (unattended, where it matters most),

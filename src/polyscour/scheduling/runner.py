@@ -103,7 +103,8 @@ def run(schedule_id: str) -> int:
     # Unattended, so PolyShield's say matters more here than anywhere: nobody
     # is watching to notice a detection being cleaned away. Refuse-only, and
     # UNKNOWN (no PolyShield) changes nothing.
-    guard = Guard(exclusions=exclusions, advisor=PathAdvisor())
+    guard = Guard(exclusions=exclusions, advisor=PathAdvisor(
+        enabled=lambda: bool(cfg.get("polyshield_path_checks"))))
     scanner = Scanner(guard=guard)
     vault = Vault(paths.vault_dir())
     ledger = Ledger(paths.ledger_path())

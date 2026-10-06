@@ -1177,6 +1177,10 @@ so it distinguishes nothing: anything that can read it, and anything that binds
   elevated helper must pass. A reply that never ends or drips is cut off by a
   64 KB cap and a total deadline, so it cannot hang a privileged process.
 
+- **The person can switch it off** (Settings → PolyShield; immediate). Off is exactly
+  UNKNOWN. It does not reach the elevated helper -- a switch in a request would
+  *widen* deletions -- so the `windows-temp` step keeps asking.
+
 **What is not covered.** An impostor on the port **learns the paths it is asked
 about**. That is a disclosure PolyScour cannot prevent from inside, because it
 cannot tell the listener from PolyShield — the shared secret proves nothing.
