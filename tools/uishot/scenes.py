@@ -25,6 +25,12 @@ from pathlib import Path
 # joke, and this is one line.
 _SANDBOX = Path(tempfile.mkdtemp(prefix="polyscour-uishot-"))
 os.environ["POLYSCOUR_DATA_DIR"] = str(_SANDBOX)
+# The same reason, for PolyShield: a machine that has it installed would
+# otherwise annotate Storage and Startup with its own live answers, and every
+# golden would become a photograph of whatever that machine happens to hold. No
+# token under this directory means no conversation at all (the client never even
+# connects); the scenes that want labels inject a scripted advisor instead.
+os.environ["PROGRAMDATA"] = str(_SANDBOX / "programdata")
 
 from polybedrock.ui.uishot import SceneRegistry            # noqa: E402
 
@@ -662,3 +668,73 @@ def storage_history(session):
         session.shot("storage_compared_incomplete")
     finally:
         storage_view.volumes.fixed_volumes = real
+
+
+# ── PolyShield's informational notes ─────────────────────────────────────────
+
+@scene("storage-polyshield")
+def storage_polyshield(session):
+    """Storage with PolyShield facts on some rows -- and nothing else changed.
+
+    Scripted answers, never a live PolyShield. What the shot has to show is the
+    boundary: the order is still by size, no row gained a button, and a row
+    PolyShield says nothing about is laid out exactly as before.
+    """
+    from polyscour.integrations.polyshield import PathAdvisor, PathStatus
+    from polyscour.views import storage_view
+
+    volume, others, report = _storage_fixture()
+    kids = report.root.largest_children(12)
+    files = report.largest_files[:12]
+    flagged = {str(kids[0].path), str(files[0].path)}
+    watched = {str(kids[0].path), str(kids[1].path)}
+
+    app = _app()
+    app.services.annotator = PathAdvisor(
+        lambda path: PathStatus(path in watched, path in flagged))
+
+    real = storage_view.volumes.fixed_volumes
+    storage_view.volumes.fixed_volumes = lambda: [volume, *others]
+    try:
+        view = session.mount(storage_view.StorageView, app=app)
+        view._render(report)
+        session.shot("storage_polyshield")
+    finally:
+        storage_view.volumes.fixed_volumes = real
+
+
+@scene("startup-polyshield")
+def startup_polyshield(session):
+    """Startup rows with PolyShield facts: no switch moved, nothing recommended."""
+    from polybedrock.startup import RunEntry
+
+    from polyscour.integrations.polyshield import PathAdvisor, PathStatus
+    from polyscour.startup.manager import StartupItem, TargetState
+    from polyscour.views import startup_view
+
+    one_drive = r"C:\Users\me\AppData\Local\Microsoft\OneDrive\OneDrive.exe"
+    only = StartupItem(
+        entry=RunEntry(hive_name="HKCU",
+                       key_path=r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+                       value_name="OneDrive", raw_value=one_drive,
+                       target_path=one_drive, scope="user"),
+        enabled=True, has_approval_record=True, target=TargetState.PRESENT)
+
+    watched = {one_drive}
+    flagged = {r"C:\Program Files\Vendor\updater.exe"}
+
+    app = _app()
+    app.services.annotator = PathAdvisor(
+        lambda path: PathStatus(path in watched or path in flagged,
+                                path in flagged))
+
+    real, real_inventory = startup_view.list_items, startup_view.read_inventory
+    startup_view.list_items = lambda: [only]
+    startup_view.read_inventory = _startup_inventory_fixture
+    try:
+        view = session.mount(startup_view.StartupView, app=app)
+        view.refresh()
+        session.shot("startup_polyshield")
+    finally:
+        startup_view.list_items = real
+        startup_view.read_inventory = real_inventory

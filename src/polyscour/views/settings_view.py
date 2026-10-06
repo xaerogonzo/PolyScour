@@ -52,6 +52,7 @@ class SettingsView(ctk.CTkFrame):
         row = self._exclusions(body, row)
         row = self._protected(body, row)
         row = self._scheduled_cleaning(body, row)
+        row = self._polyshield(body, row)
         row = self._storage_history(body, row)
         self._privacy(body, row)
 
@@ -155,6 +156,34 @@ class SettingsView(ctk.CTkFrame):
         box.grid(row=2, column=0, sticky="ew", padx=16, pady=(4, 14))
         box.insert("1.0", text)
         box.configure(state="disabled")
+        return row + 1
+
+    def _polyshield(self, parent, row: int) -> int:
+        card = self._section(
+            parent, row, "PolyShield",
+            "If PolyShield is installed and running, PolyScour asks it whether it "
+            "has a recorded detection at a path before cleaning it, and leaves "
+            "that file alone. The same answers put a one-line note on rows in "
+            "Storage and Startup. Each question names a path and goes only to "
+            "your own machine. With this off PolyScour asks nothing and behaves "
+            "as if PolyShield were not installed; it never refuses to clean "
+            "because PolyShield is missing.")
+        var = ctk.BooleanVar(value=bool(cfg.get("polyshield_path_checks")))
+        ctk.CTkCheckBox(
+            card, text="Ask PolyShield about paths", variable=var,
+            font=theme.get("small"),
+            command=lambda: cfg.set_value("polyshield_path_checks", var.get())
+        ).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 6))
+        ctk.CTkLabel(
+            card, anchor="w", justify="left", wraplength=720,
+            font=theme.get("small"), text_color=theme.color("dim"),
+            text="This does not reach the administrator step that clears "
+                 "C:\\Windows\\Temp: that process cannot read your settings, and a "
+                 "switch handed to it in a request could only ever widen what "
+                 "it deletes, which nothing sent to it is allowed to do. It "
+                 "still asks, and an unreachable PolyShield changes nothing "
+                 "there either."
+        ).grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
         return row + 1
 
     def _scheduled_cleaning(self, parent, row: int) -> int:

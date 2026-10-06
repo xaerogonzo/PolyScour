@@ -1095,6 +1095,98 @@ something else running as the same user is indistinguishable from the
 original, because both have exactly the same authority as that user already
 had.
 
+## PolyShield path awareness
+
+Added with `docs/adr/0015`, once PolyShield's own `PATH_STATUS` existed. The
+first thing PolyScour asks another program about *individual files*, and the
+first PolyShield question that carries something other than a status.
+
+### T31 — A clean removes something PolyShield has a recorded detection at
+
+**What could go wrong.** PolyShield detects `evil.exe` in `%TEMP%`; Clean (or a
+schedule, with nobody watching — T28–T30) deletes it, taking the evidence and
+the quarantine target with it.
+
+**Mitigations.**
+- `Guard._refuse_flagged` is the last link in the chain, so the scan never
+  offers a flagged file and the executor — which calls the guard again
+  immediately before each delete, with a fresh answer cache — refuses one
+  recorded in between. The elevated helper builds its own guard with the same
+  advisor, so `windows-temp`, which is only cleaned elevated, is covered too.
+- A flagged item is reported as its own benign skip and counted on the Clean
+  screen; it is neither silently absent nor presented as a fault.
+- Tested end to end through PolyShield's real matching logic over a real
+  socket, with a negative control (the same scan with no advisor deletes the file).
+
+**What is not covered.**
+- **`flagged: false` is not "safe".** PolyShield reads a capped event log, so it
+  means "no recorded detection". A detection it has already forgotten, or never
+  made, is invisible here. Nothing in PolyScour words the absence of a flag as a
+  clearance (`describe_path` produces no text for it).
+- **The window between the second guard call and the `unlink`** — microseconds,
+  and it cannot be closed from outside PolyShield.
+- **Only paths under a rule's permitted roots are ever asked about**, because
+  those are the only ones PolyScour acts on.
+- **The Recycle Bin.** It is emptied wholesale through the Shell API and, by
+  design (`docs/adr/0012`), never passes through the guard, so nothing here
+  asks about what is in it. A detection recorded on a file the person already
+  deleted is not protected from the confirmation they type to empty the bin.
+- **Uninstall and Game Mode** act on programs and processes, not paths, and
+  have their own authorities; this check does not reach them.
+- **No PolyShield, no protection.** That is deliberate (T32), and it is the
+  state PolyScour was always in.
+
+### T32 — The integration becomes a dependency, or a cost
+
+**What could go wrong.** An optional integration that can stop the cleaner is no
+longer optional; one that costs a socket round trip per file makes a 39-second
+scan unusable.
+
+**Mitigations.**
+- Three outcomes, kept apart: a wrong-shaped reply is rejected; no reply is
+  UNKNOWN; **UNKNOWN proceeds under PolyScour's own guard chain, granting nothing
+  and blocking nothing**. Asserted across absent, too-old (a service older than
+  PATH_STATUS answers `Unknown command`), nonsense, gone, and present-but-clean.
+- Directories are asked about before files (a clean root answers for its whole
+  tree), answers are cached for exactly one operation, and silence latches off
+  for the rest of it. A 300-file clean tree costs one question; the naive
+  per-file mutant costs 301 and four tests fail against it.
+- Storage and Startup ask lazily, about the rows on screen only, off the UI
+  thread, and a screen drawn with nothing to say is laid out exactly as before.
+
+**What is not covered.** Latency when PolyShield is running but slow: each
+exchange is bounded (0.4 s connect, 3 s total), and a scan with a flagged
+subtree asks about each directory and file on that chain.
+
+### T33 — A path is disclosed to whatever is listening on the port
+
+**What could go wrong.** Earlier PolyShield questions carried nothing about the
+machine. `PATH_STATUS` carries an absolute path, and the token that "authenticates"
+the exchange is world-readable by design (PolyShield's own documentation says so),
+so it distinguishes nothing: anything that can read it, and anything that binds
+`127.0.0.1:52614` while PolyShield is not running, can receive the question.
+
+**Mitigations.**
+- Loopback only; nothing leaves the machine, and with no token on disk the
+  client does not connect at all.
+- What is sent is narrow: the rule roots PolyScour is scanning, directories and
+  files along a chain PolyShield has already said holds a detection, and the
+  rows on screen on Storage and Startup. Never file contents, never a list.
+- A forged reply gains an impostor nothing but the power to make a clean do
+  *less* (`Guard` can only refuse), which is the same test every input to the
+  elevated helper must pass. A reply that never ends or drips is cut off by a
+  64 KB cap and a total deadline, so it cannot hang a privileged process.
+
+- **The person can switch it off** (Settings → PolyShield; immediate). Off is exactly
+  UNKNOWN. It does not reach the elevated helper -- a switch in a request would
+  *widen* deletions -- so the `windows-temp` step keeps asking.
+
+**What is not covered.** An impostor on the port **learns the paths it is asked
+about**. That is a disclosure PolyScour cannot prevent from inside, because it
+cannot tell the listener from PolyShield — the shared secret proves nothing.
+`docs/PRIVACY.md` says so plainly, and PolyShield's own `WINDOWS_SERVICE.md`
+documents the same property on its side.
+
 ## Non-goals
 
 PolyScour is not an antivirus and does not try to be. It can say an item is

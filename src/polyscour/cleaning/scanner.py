@@ -25,7 +25,7 @@ from pathlib import Path
 
 from polyscour.cleaning.rules import Rule
 from polyscour.contracts import Evidence, Finding, RuleOutcome, ScanResult
-from polyscour.safety.guard import Guard, GuardRefusal
+from polyscour.safety.guard import Guard, GuardRefusal, PolyShieldFlagged
 from polyscour.safety.policy import resolve_family
 
 
@@ -165,6 +165,12 @@ class Scanner:
 
                 try:
                     approved = self.guard.authorize(rule.id, path, rule.operation)
+                except PolyShieldFlagged:
+                    # Left out of the findings, never offered -- but counted
+                    # apart from the ordinary refusals so the screen can say
+                    # why something is missing rather than leave a gap.
+                    outcome.withheld_by_polyshield += 1
+                    continue
                 except GuardRefusal:
                     # Not surfaced as a finding: an offer the guard would refuse
                     # must never reach the user. Counted, so a rule that refuses

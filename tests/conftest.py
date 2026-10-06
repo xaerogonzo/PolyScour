@@ -66,6 +66,24 @@ def no_real_supervisors(monkeypatch, request):
     monkeypatch.setattr(supervisor, "_spawn", refuse)
 
 
+@pytest.fixture(autouse=True)
+def no_real_polyshield(monkeypatch, tmp_path):
+    """Keep the suite off a PolyShield that happens to be running here.
+
+    The guard, the scanner, the elevated helper and two screens can now ask
+    PolyShield about paths. On a developer's machine that has PolyShield
+    installed, an unguarded test would find its real token in
+    ``%ProgramData%`` and put real questions to the real service -- slowly,
+    non-deterministically, and about temp directories it just invented.
+
+    The client reads the token on every call, and no token means no
+    conversation at all (it never even connects), so pointing ``PROGRAMDATA``
+    at an empty directory is a complete guard. The PolyShield tests that *do*
+    want a conversation set their own ``PROGRAMDATA`` and port on top of this.
+    """
+    monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "no-polyshield-here"))
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",

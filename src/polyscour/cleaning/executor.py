@@ -41,9 +41,23 @@ from polyscour.contracts import (
     classify_os_error,
 )
 from polyscour.ledger import Ledger, new_operation_id
-from polyscour.safety.guard import Guard, GuardRefusal
+from polyscour.safety.guard import Guard, GuardRefusal, PolyShieldFlagged
 from polyscour.safety.policy import Operation, entry_for
 from polyscour.vault import Vault, VaultedItem, VaultError
+
+def _refusal_skip(finding, exc: GuardRefusal) -> Skip:
+    """A guard refusal as a skip -- with the one expected exception told apart.
+
+    PolyShield having a recorded detection at a path is not the guard catching a
+    bug or an attack, which is what REFUSED_BY_GUARD is worded loudly for. It
+    is its own, benign reason, so the run reads as "left some things alone"
+    rather than as a failure.
+    """
+    reason = (SkipReason.FLAGGED_BY_POLYSHIELD
+              if isinstance(exc, PolyShieldFlagged)
+              else SkipReason.REFUSED_BY_GUARD)
+    return Skip(finding.path, reason, str(exc), finding.rule_id)
+
 
 def _skips_from(data: dict) -> list[Skip]:
     """Turn the helper's report into skips, without losing the totals.
@@ -149,8 +163,7 @@ class Executor:
             try:
                 self._authorise(finding)
             except GuardRefusal as exc:
-                skips.append(Skip(finding.path, SkipReason.REFUSED_BY_GUARD, str(exc),
-                                  finding.rule_id))
+                skips.append(_refusal_skip(finding, exc))
                 continue
             if not finding.path.exists():
                 skips.append(Skip(finding.path, SkipReason.VANISHED, "already gone",
@@ -194,8 +207,7 @@ class Executor:
             try:
                 approved = self._authorise(finding)
             except GuardRefusal as exc:
-                skips.append(Skip(finding.path, SkipReason.REFUSED_BY_GUARD, str(exc),
-                                  finding.rule_id))
+                skips.append(_refusal_skip(finding, exc))
                 continue
 
             operation = next(iter(entry_for(finding.rule_id).operations))

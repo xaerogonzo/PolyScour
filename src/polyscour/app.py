@@ -25,6 +25,7 @@ from polyscour.cleaning.executor import Executor
 from polyscour.cleaning.rules import load_all
 from polyscour.cleaning.scanner import Scanner
 from polyscour.gamemode import session as gamemode
+from polyscour.integrations.polyshield import PathAdvisor
 from polyscour.ledger import Ledger
 from polyscour.safety.guard import Guard
 from polyscour.storage.history import SnapshotStore
@@ -54,6 +55,11 @@ _NAV = [
 ]
 
 
+def _path_checks_on() -> bool:
+    """Read per question, so toggling the setting needs no restart."""
+    return bool(cfg.get("polyshield_path_checks"))
+
+
 class Services:
     """Everything the views share, built once.
 
@@ -63,7 +69,13 @@ class Services:
 
     def __init__(self) -> None:
         exclusions = [Path(p) for p in (cfg.get("exclusions") or [])]
-        self.guard = Guard(exclusions=exclusions)
+        # Optional and refuse-only: with no PolyShield every question is
+        # UNKNOWN and the guard behaves exactly as it always did.
+        self.guard = Guard(exclusions=exclusions,
+                           advisor=PathAdvisor(enabled=_path_checks_on))
+        # A second advisor for the read-only screens' labels. Its own
+        # cache, so a Storage render never shares state with a clean's.
+        self.annotator = PathAdvisor(enabled=_path_checks_on)
         self.vault = Vault(paths.vault_dir())
         self.ledger = Ledger(paths.ledger_path())
         # Its own file, not the ledger: a scan did nothing to this machine, and

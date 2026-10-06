@@ -67,13 +67,20 @@ class SkipReason(enum.Enum):
     LOCKED = "locked"                        # sharing violation -- expected
     PERMISSION = "permission"                # needs elevation -- expected
     VANISHED = "vanished"                    # gone before we got to it
+    #: PolyShield has a recorded detection at this path. Benign on purpose: it
+    #: is an expected, deliberate condition -- the item is being left alone
+    #: because something else holds a claim on it -- not a fault. Folding it into
+    #: REFUSED_BY_GUARD would make every clean on a machine with one detection
+    #: read as "the guard refused something the planner produced", which means a
+    #: bug or an attack and is worded loudly for exactly that reason.
+    FLAGGED_BY_POLYSHIELD = "flagged_by_polyshield"
     REFUSED_BY_GUARD = "refused_by_guard"    # NOT benign
     ERROR = "error"                          # unclassified -- not benign
 
     @property
     def is_benign(self) -> bool:
         return self in (SkipReason.LOCKED, SkipReason.PERMISSION,
-                        SkipReason.VANISHED)
+                        SkipReason.VANISHED, SkipReason.FLAGGED_BY_POLYSHIELD)
 
 
 @dataclass(frozen=True)
@@ -121,6 +128,11 @@ class RuleOutcome:
     aborted: bool = False
     abort_reason: str = ""
     skipped_paths: int = 0
+    #: Candidates left out of the findings because PolyShield has a recorded
+    #: detection at them. Counted apart from ``skipped_paths`` so the screen
+    #: can say *why* something is missing instead of leaving a gap -- an offer
+    #: quietly absent is how a cleaner starts doing less than it appears to.
+    withheld_by_polyshield: int = 0
 
     @property
     def total_bytes(self) -> int:

@@ -30,6 +30,7 @@ from polyscour.storage import report as storage_report
 from polyscour.storage import volumes
 from polyscour.storage.analyser import (StopReason, StorageScanRequest, analyse)
 from polyscour.storage.review import review_scan
+from polyscour.views.polyshield_notes import annotate
 
 #: Colour only. The wording is ``storage.report.STOP_LABEL``, shared with the
 #: export so the two cannot describe a scan differently.
@@ -250,8 +251,17 @@ class StorageView(ctk.CTkFrame):
             row=0, column=0, sticky="ew", padx=16, pady=(12, 6))
         return frame
 
-    def _bars(self, frame, rows, total: int, start_row: int) -> None:
-        """Name, size, and a proportional bar. No button on any row."""
+    def _bars(self, frame, rows, total: int, start_row: int,
+              paths=None, folder: bool = False) -> list:
+        """Name, size, and a proportional bar. No button on any row.
+
+        ``paths``, when given, is the path behind each row, in order. It is used
+        for one thing: returning ``(path, folder, place)`` targets so the caller
+        can have PolyShield's informational note added to a row later. It does
+        not affect what is drawn or in what order -- see
+        ``views/polyshield_notes.py``.
+        """
+        targets = []
         for i, (label, size) in enumerate(rows, start=start_row):
             line = ctk.CTkFrame(frame, fg_color="transparent")
             line.grid(row=i, column=0, sticky="ew", padx=16, pady=1)
@@ -266,6 +276,17 @@ class StorageView(ctk.CTkFrame):
             ctk.CTkLabel(line, text=human(size), font=theme.get("small"),
                          width=90, anchor="e",
                          text_color=theme.color("subtext")).grid(row=0, column=2)
+
+            if paths is not None:
+                def place(text, line=line):
+                    # Created only when there is something to say, so a row
+                    # with nothing to add is laid out exactly as it always was.
+                    ctk.CTkLabel(line, text=text, font=theme.get("small"),
+                                 anchor="w", text_color=theme.color("dim")
+                                 ).grid(row=1, column=0, columnspan=3,
+                                        sticky="w")
+                targets.append((paths[i - start_row], folder, place))
+        return targets
 
     def _change_rows(self, frame, rows, start_row: int) -> int:
         """Movement rows: path, a bar for its size, and the signed figure.
@@ -327,6 +348,9 @@ class StorageView(ctk.CTkFrame):
     def _render(self, report, review=None) -> None:
         self._clear()
         row = 0
+        # Identifies *this* drawing, so a PolyShield answer that arrives after
+        # the screen was rebuilt labels nothing.
+        self._notes_token = token = object()
 
         # ── the summary, with the residual beside the total rather than under it
         summary = self._section(self._body, row, f"{report.volume.label} — measured")
@@ -369,16 +393,19 @@ class StorageView(ctk.CTkFrame):
         largest = self._section(self._body, row, "Largest folders")
         row += 1
         children = report.root.largest_children(storage_report.LIST_ROWS)
-        self._bars(largest, [(c.name, c.allocated_bytes) for c in children],
-                   report.measured_bytes, 1)
+        notes = self._bars(largest, [(c.name, c.allocated_bytes) for c in children],
+                           report.measured_bytes, 1,
+                           paths=[c.path for c in children], folder=True)
         ctk.CTkLabel(largest, text="", font=theme.get("small")).grid(row=90, column=0,
                                                                     pady=(0, 8))
 
         files = self._section(self._body, row, "Largest files")
         row += 1
-        self._bars(files, [(f.path.name, f.allocated_bytes)
-                           for f in report.largest_files[:storage_report.LIST_ROWS]],
-                   report.measured_bytes, 1)
+        top_files = report.largest_files[:storage_report.LIST_ROWS]
+        notes += self._bars(files, [(f.path.name, f.allocated_bytes)
+                                    for f in top_files],
+                            report.measured_bytes, 1,
+                            paths=[f.path for f in top_files])
         ctk.CTkLabel(files, text="", font=theme.get("small")).grid(row=90, column=0,
                                                                   pady=(0, 8))
 
@@ -390,3 +417,7 @@ class StorageView(ctk.CTkFrame):
             self._bars(ext, by_ext, report.measured_bytes, 1)
             ctk.CTkLabel(ext, text="", font=theme.get("small")).grid(row=90, column=0,
                                                                      pady=(0, 8))
+
+        # One background pass over the rows actually on screen, after they are
+        # drawn. Informational only: it cannot reorder or select anything.
+        annotate(self.app, notes, lambda: self._notes_token is token)

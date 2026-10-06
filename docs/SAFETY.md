@@ -488,6 +488,58 @@ it, unelevated and interactive-only, before a single rule is scanned — an
 integrity check, not a privilege boundary, since the task carries no more
 authority than the logged-in user already has either way.
 
+## 14. PolyShield: an advisory link at the end of the chain, and it can only refuse
+
+The guard chain's earlier links are all decided by code and data PolyScour
+holds. This one asks another program, so it is built to be the least
+trusting link in the chain rather than the most.
+
+```
+policy -> roots -> reparse -> contain -> denylist -> exclusions
+                                                         |
+                                       PolyShield: recorded detection here?
+```
+
+**It can only ever take a yes back.** `Guard._refuse_flagged` runs after every
+other link has said yes, and its only power is to raise `PolyShieldFlagged`. No
+answer — true, false, forged, absent — can add a path to what is permitted, so
+it passes the test every input to the elevated helper has to pass (*narrow,
+never widen*), which is why the helper's two guards ask too. A test gives the
+guard an advisor that calls everything clean and shows a path outside the
+permitted roots is still refused.
+
+**UNKNOWN proceeds.** No PolyShield, a refusal, a wrong-shaped reply, a service
+too old to know the command: the chain's own verdict stands, exactly as before
+PolyShield existed. And `flagged: false` is **not** a clearance — PolyShield
+answers from a capped event log, so it means "no recorded detection".
+
+**The person's switch** (`polyshield_path_checks`, Settings → PolyShield) turns off every
+question asked as the user, immediately; off is exactly UNKNOWN. It cannot reach the
+elevated helper: turning the check off *widens* what is deleted, and a helper input
+may only narrow.
+
+**Off unless someone turns it on.** `Guard(advisor=None)` is the default, so no
+bare `Guard()` ever opens a socket. Four places pass an advisor, each in one
+line: `Services`, `scheduling/runner.py` (unattended, where it matters most),
+and the elevated helper's two guards. `tests/conftest.py` keeps the whole suite
+off a real PolyShield by pointing `PROGRAMDATA` somewhere empty.
+
+**Cheap by construction.** `PathAdvisor` asks about directories before files
+(a clean root answers for its whole tree, because a detection beneath a folder
+flags the folder), caches for exactly one operation (`Guard.begin()` resets it),
+and stops asking after the first silence. 300 files cost one question, not 301.
+
+**Called twice, like everything else here.** The executor re-authorises each
+item immediately before acting, with a fresh answer cache, so a detection
+recorded between the scan and the delete is still seen.
+
+A flagged item is the one guard refusal that is **benign**
+(`SkipReason.FLAGGED_BY_POLYSHIELD`): an expected, deliberate condition rather
+than the bug-or-attack `REFUSED_BY_GUARD` is worded for. It is reported and
+counted, never silently absent. `docs/adr/0015` has the reasoning;
+`docs/THREAT_MODEL.md` T31–T33 has what is and is not covered, including that a
+listener impersonating PolyShield learns the paths it is asked about.
+
 ## What is tested
 
 `tests/test_safety.py` and `tests/test_executor.py`, in full:

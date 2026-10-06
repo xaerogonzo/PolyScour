@@ -61,6 +61,8 @@ src/polyscour/
 │   ├── policy.py     RootFamily, RuleTrustPolicy, POLICY — THE AUTHORITY
 │   ├── reparse.py    Component-wise reparse inspection, before canonicalising
 │   └── guard.py      The chain: policy → roots → reparse → contain → denylist
+│                     → exclusions → PolyShield (optional advisor, last,
+│                     refuse-only; default OFF so a bare Guard() never asks)
 ├── gamemode/
 │   ├── policy.py     NEVER_SUSPEND + structural veto — THE AUTHORITY for
 │   │                 processes, as safety/policy.py is for paths
@@ -77,7 +79,11 @@ src/polyscour/
 │   └── recyclebin.py The Recycle Bin: SHQueryRecycleBinW/SHEmptyRecycleBinW,
 │                     not a RootFamily. moderate, irreversible. adr/0012
 ├── integrations/
-│   └── polyshield.py Optional, read-only, three commands, fails closed
+│   └── polyshield.py Optional, read-only, four commands. UNKNOWN (no reply, a
+│                     refusal, wrong shape) blocks and clears NOTHING; only
+│                     flagged:true changes anything, and only by doing less.
+│                     PathAdvisor: per-operation cache, latch, dirs first
+│                     (adr/0015)
 ├── elevation/
 │   ├── protocol.py   The CLOSED operation set + shape validation (not authz)
 │   ├── helper.py     Runs elevated. Re-runs the guard. Assumes the GUI lies.
@@ -133,6 +139,8 @@ src/polyscour/
 │   └── runner.py     --scheduled-clean <id>: check, check, check, scan,
 │                     plan(dry_run=False), execute — allow_elevation is
 │                     never passed True, not merely checked and refused
+├── views/polyshield_notes.py  Storage/Startup labels. DECORATION: no handle on
+│                     order, selection or any control (a test scans for it)
 └── views/            dashboard, clean, storage, gamemode, startup, uninstall,
                       history, settings (schedules live in Settings, not
                       their own view)
@@ -235,6 +243,11 @@ Skip doc updates for pure internal refactors with no behaviour change.
   parameter has to pass. `exclusions` and `expected_raw_value` pass it because
   each can only cause a refusal; anything that could add to the permitted set
   never does, whatever it is called.
+- **PolyShield's answer about a path can only ever make PolyScour do less.** It
+  is consulted after every other guard link, and UNKNOWN (absent, too old,
+  refused, nonsense) changes nothing. `flagged: false` is "no recorded
+  detection" from a capped log — never a clearance, never worded as one. A
+  label from it on a screen is a fact, not a sort key or a recommendation.
 - **RESOURCE and DATA are different lifetimes.** `paths.resource_root()`
   ships with the build and may sit in a temp directory deleted on exit;
   `app_root()` must survive a restart. Never resolve anything durable from the
