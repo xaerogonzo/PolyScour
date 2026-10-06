@@ -52,7 +52,143 @@ ENV_SCRIPT = "POLYSCOUR_DRIVE"
 ENV_POLYSHIELD_PORT = "POLYSCOUR_DRIVE_POLYSHIELD_PORT"
 
 _LEDGER = None
+_CONSOLE = None
 _DEFAULT_AFTER_MS = 400
+#: The driver's own narration, written to the REAL stdout so the console channel
+#: below never records the driver talking to itself (a ``no_console_text`` check
+#: would otherwise be failed by the line announcing it).
+_REAL_STDOUT = sys.stdout
+
+
+class Console:
+    """What the app wrote to its console, and logged, kept for the verdict.
+
+    The ledger (Manager's, pinned, never edited) hears warnings, ERROR-level log
+    records and uncaught exceptions. It does not hear a ``print``, a library writing
+    to stderr, or an INFO record -- yet those are what a person sees in
+    ``run.bat --console`` and what the next bug report is made of. This channel is
+    built AROUND the ledger, as the template's README says to.
+
+    Evidence, not a gate: nothing here fails a run by itself (a library may
+    legitimately chatter). A script asserts on it with ``console_contains`` /
+    ``no_console_text``. It is bounded, and the bound is SAID: ``dropped`` is a
+    first-class number in the report, because a log tail that silently lost its
+    start would let a "no such text" check pass on lines it never saw.
+    """
+
+    MAX_LINES = 4000
+    MAX_LINE = 2000
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._lines: list[dict] = []
+        self._partial = {"stdout": "", "stderr": ""}
+        self.dropped = 0
+        self._began = time.monotonic()
+        self._originals: dict = {}
+        self._handler = None
+
+    # -- recording ----------------------------------------------------------
+
+    def feed(self, stream: str, text: str) -> None:
+        """Record ``text`` from ``stream`` ("stdout", "stderr" or "log")."""
+        with self._lock:
+            buffered = self._partial.get(stream, "") + text
+            *whole, rest = buffered.split("\n")
+            if stream in self._partial:
+                self._partial[stream] = rest
+            elif rest:
+                whole.append(rest)
+            for line in whole:
+                self._append(stream, line)
+
+    def _append(self, stream: str, line: str) -> None:
+        if len(self._lines) >= self.MAX_LINES:
+            del self._lines[0]
+            self.dropped += 1
+        self._lines.append({"t": round(time.monotonic() - self._began, 3),
+                            "stream": stream, "line": line[: self.MAX_LINE]})
+
+    def lines(self, stream: str | None = None) -> list[dict]:
+        with self._lock:
+            tail = [(s, p) for s, p in self._partial.items() if p]
+            held = list(self._lines)
+        held += [{"t": None, "stream": s, "line": p} for s, p in tail
+                 if stream in (None, s)]
+        return [e for e in held if stream in (None, e["stream"])]
+
+    def contains(self, text: str, stream: str | None = None) -> str:
+        """The first recorded line containing ``text`` (case-insensitive), or ''."""
+        wanted = text.lower()
+        for entry in self.lines(stream):
+            if wanted in entry["line"].lower():
+                return entry["line"]
+        return ""
+
+    def to_dict(self, tail: int = 200) -> dict:
+        everything = self.lines()
+        return {"recorded": len(everything), "dropped": self.dropped,
+                "max_lines": self.MAX_LINES, "tail": everything[-tail:]}
+
+    # -- hooks ----------------------------------------------------------------
+
+    def install(self) -> None:
+        import logging
+
+        for name in ("stdout", "stderr"):
+            original = getattr(sys, name)
+            self._originals[name] = original
+            setattr(sys, name, _Tee(self, name, original))
+        console = self
+
+        class _Records(logging.Handler):
+            def emit(self, record):                       # never raises into the app
+                try:
+                    console.feed("log", "%s %s: %s\n" % (
+                        record.levelname, record.name, record.getMessage()))
+                except Exception:                         # noqa: BLE001
+                    pass
+
+        self._handler = _Records(level=logging.DEBUG)
+        logging.getLogger().addHandler(self._handler)
+
+    def uninstall(self) -> None:
+        import logging
+
+        for name, original in self._originals.items():
+            current = getattr(sys, name, None)
+            if isinstance(current, _Tee):      # someone replaced it after us: leave theirs
+                setattr(sys, name, original)
+        self._originals.clear()
+        if self._handler is not None:
+            logging.getLogger().removeHandler(self._handler)
+            self._handler = None
+
+
+class _Tee:
+    """Passes everything through to the real stream and records a copy. A stream
+    that is None (``pythonw``) is tolerated: the copy is still recorded."""
+
+    def __init__(self, console: Console, name: str, real) -> None:
+        self._console, self._name, self._real = console, name, real
+
+    def write(self, text):
+        try:
+            self._console.feed(self._name, str(text))
+        except Exception:                                 # noqa: BLE001
+            pass
+        if self._real is not None:
+            return self._real.write(text)
+        return len(text)
+
+    def flush(self):
+        if self._real is not None:
+            self._real.flush()
+
+    def __getattr__(self, name):                         # encoding, isatty, fileno, ...
+        if self._real is None:
+            raise AttributeError(name)
+        return getattr(self._real, name)
 
 #: The only things a script may press, matched on the WHOLE label (a substring
 #: match would let "Scan" press "Scanning..." and, worse, let a short word match
@@ -74,7 +210,8 @@ _STEP_KEYS = {
     "navigate": {"view"},
     "click": {"text", "view"},
     "toggle": {"text", "value", "view"},
-    "expect": {"id", "check", "text", "view", "key", "equals", "at_most", "within_ms"},
+    "expect": {"id", "check", "text", "view", "key", "equals", "at_most", "within_ms",
+               "stream"},
     "expect_clean": {"settle_ms"},
     "log_report": set(),
     "quit": set(),
@@ -98,11 +235,14 @@ def _say(message: str) -> None:
     raised inside a step, escape the timer chain, and look exactly like the app
     hanging -- a diagnostic dying on the glyphs of the thing it diagnoses.
     """
+    out = _REAL_STDOUT if _CONSOLE is not None else sys.stdout
+    if out is None:                      # pythonw: nowhere to say it
+        return
     try:
-        print(message, flush=True)
+        print(message, file=out, flush=True)
     except UnicodeEncodeError:
-        enc = getattr(sys.stdout, "encoding", None) or "ascii"
-        print(message.encode(enc, "replace").decode(enc), flush=True)
+        enc = getattr(out, "encoding", None) or "ascii"
+        print(message.encode(enc, "replace").decode(enc), file=out, flush=True)
 
 
 def requested() -> str | None:
@@ -164,13 +304,15 @@ def begin(app=None) -> None:
     requested but not safe to run, rather than letting an ordinary window open on
     a hidden desktop and wait for a script that will never come.
     """
-    global _LEDGER
+    global _LEDGER, _CONSOLE
     if not requested() or _LEDGER is not None:
         return
     _gates()
     load(requested())                 # a bad script is refused before anything runs
     _LEDGER = drive_ledger.Ledger()
     _LEDGER.install()
+    _CONSOLE = Console()
+    _CONSOLE.install()
     if app is not None:
         _LEDGER.install_tk(app)
 
@@ -189,7 +331,7 @@ def start_if_requested(app):
         except tk.TclError:
             pass
     driver = Driver(app, scenario["steps"], ledger=_LEDGER, script=requested(),
-                    report=scenario.get("report"))
+                    report=scenario.get("report"), console=_CONSOLE)
     driver.start()
     return driver
 
@@ -229,11 +371,14 @@ def _text(widget) -> str:
 
 
 class Driver:
-    def __init__(self, app, steps, *, ledger=None, script=None, report=None) -> None:
+    def __init__(self, app, steps, *, ledger=None, script=None, report=None,
+                 console=None) -> None:
         self._app, self._steps, self._index = app, steps, 0
         # Never None: a hand-built driver gets a ledger that listens to nothing.
         self._ledger = ledger if ledger is not None else drive_ledger.Ledger()
         self._script, self._report_path = script, report
+        # Like the ledger: never None, so a hand-built driver gets one that hears nothing.
+        self._console = console if console is not None else Console()
         self._run_id = drive_ledger.new_run_id()
         self._started = time.time()
         self._hold, self._hold_ms = None, 500
@@ -346,6 +491,15 @@ class Driver:
         if check == "view_active":
             actual = getattr(self._app, "_active", None)
             return actual == step.get("view"), actual
+        if check in ("console_contains", "no_console_text"):
+            text = str(step.get("text", ""))
+            stream = step.get("stream")
+            if not text:
+                raise ValueError("'text' is required")
+            if stream not in (None, "stdout", "stderr", "log"):
+                raise ValueError("'stream' must be stdout, stderr or log")
+            hit = self._console.contains(text, stream)
+            return (bool(hit) if check == "console_contains" else not hit), hit
         if check == "diagnostic_contains":   # the LIVE ledger, never a file
             return self._ledger.contains(str(step.get("text", ""))), self._ledger.summary()
         raise ValueError("unknown check %r" % check)
@@ -417,6 +571,11 @@ class Driver:
         report = self._ledger.finalize(lambda: drive_ledger.build_report(
             self._ledger, script=self._script, run_id=self._run_id,
             started=self._started, reason=reason, shots=[]))
+        if first:
+            # Added AROUND the pinned ledger's report, never inside it. Detached
+            # first, so nothing printed after the verdict is counted against it.
+            self._console.uninstall()
+            report["console"] = self._console.to_dict()
         if first and self._script:
             path = self._report_path or str(Path(self._script).with_suffix(".report.json"))
             try:

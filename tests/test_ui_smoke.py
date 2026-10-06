@@ -1113,3 +1113,27 @@ def test_the_user_object_check_can_say_no_and_can_say_yes(drove):
     assert drove(do="expect", check="user_objects", at_most=10 ** 9, within_ms=0).passed
     ledger = drove(do="expect", check="user_objects", at_most=1, within_ms=0)
     assert not ledger.passed
+
+
+def test_a_drive_can_assert_on_what_the_console_received(drove):
+    drove.driver._console.feed("stderr", "something went wrong\n")
+    assert drove(do="expect", check="console_contains", text="went wrong",
+                 stream="stderr", within_ms=0).passed
+
+
+def test_a_console_assertion_can_say_no(drove):
+    """Negative control: a no_console_text over text that IS there fails, and a
+    console_contains over text that is not fails."""
+    drove.driver._console.feed("stdout", "Traceback (most recent call last)\n")
+    ledger = drove(do="expect", check="no_console_text", text="Traceback", within_ms=0)
+    assert not ledger.passed
+
+
+def test_a_console_check_over_absent_text_fails(drove):
+    assert not drove(do="expect", check="console_contains", text="never printed",
+                     within_ms=0).passed
+
+
+def test_an_unknown_console_stream_is_a_failed_step(drove):
+    ledger = drove(do="expect", check="console_contains", text="x", stream="stdin", within_ms=0)
+    assert not ledger.passed and ledger.contains("'stream' must be")

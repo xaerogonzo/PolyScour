@@ -90,6 +90,18 @@
       "within_ms": 3000
     },
     {
+      "do": "expect",
+      "id": "no traceback reached the console",
+      "check": "no_console_text",
+      "text": "Traceback"
+    },
+    {
+      "do": "expect",
+      "id": "no handle exhaustion reached the console",
+      "check": "no_console_text",
+      "text": "No more menus"
+    },
+    {
       "do": "expect_clean",
       "settle_ms": 1500
     },

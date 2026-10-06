@@ -220,3 +220,57 @@ def test_the_launcher_refuses_a_setup_it_does_not_understand_or_that_escapes(set
 def test_a_good_setup_is_accepted():
     assert launcher()._check_setup(
         {"temp_files": {"count": 3}, "polyshield": {"detections": ["d1/f5.tmp"]}}) is None
+
+
+# ══ the console channel ═══════════════════════════════════════════════════════
+
+def test_the_console_records_whole_lines_and_a_trailing_partial_one():
+    console = driver.Console()
+    console.feed("stdout", "first\nsec")
+    console.feed("stdout", "ond\nthird")
+    assert [e["line"] for e in console.lines("stdout")] == ["first", "second", "third"]
+
+
+def test_the_console_keeps_streams_apart():
+    console = driver.Console()
+    console.feed("stderr", "boom\n")
+    console.feed("log", "INFO x: hello\n")
+    assert console.contains("boom", "stderr") and not console.contains("boom", "stdout")
+    assert console.contains("HELLO") and console.contains("hello", "log")
+
+
+def test_a_full_console_says_what_it_dropped():
+    """A bounded tail that hid its own start would let "no such text" pass on lines
+    it never saw, so the loss is a number in the report."""
+    console = driver.Console()
+    console.MAX_LINES = 3
+    console.feed("stdout", "".join("line %d\n" % i for i in range(5)))
+    assert console.dropped == 2 and console.to_dict()["dropped"] == 2
+    assert not console.contains("line 0") and console.contains("line 4")
+
+
+def test_the_tee_passes_through_records_and_restores(capsys):
+    import sys
+    console = driver.Console()
+    console.install()
+    try:
+        print("to the real console")
+        print("to stderr", file=sys.stderr)
+        import logging
+        logging.getLogger("t").warning("a record")
+    finally:
+        console.uninstall()
+    out = capsys.readouterr()
+    assert "to the real console" in out.out and "to stderr" in out.err
+    assert console.contains("to the real console", "stdout")
+    assert console.contains("to stderr", "stderr")
+    assert console.contains("a record", "log")
+    print("after")                                         # restored: not recorded
+    assert not console.contains("after")
+
+
+def test_the_tee_survives_a_stream_that_is_none():
+    console = driver.Console()
+    tee = driver._Tee(console, "stdout", None)             # pythonw has no stdout
+    assert tee.write("quiet\n") == 6 and console.contains("quiet")
+    tee.flush()

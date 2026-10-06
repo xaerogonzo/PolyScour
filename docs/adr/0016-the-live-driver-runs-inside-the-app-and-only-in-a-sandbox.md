@@ -44,6 +44,17 @@ hazard, so the driver needed more guard rails than the template has.
    2 refused / 3 could not run, and flags a disagreement between the child's
    exit code and its report.
 
+8. **The console is evidence too.** The pinned ledger hears warnings, ERROR
+   records and uncaught exceptions, but not a `print`, a library writing to
+   stderr, or an INFO record -- what `run.bat --console` shows. `driver.Console`
+   (built around the ledger, never inside it) tees stdout/stderr and records
+   every logging record. Scripts assert with `console_contains` /
+   `no_console_text` (optional `stream`: stdout, stderr, log); the report gains a
+   `console` section (tail plus a `dropped` count, because a bounded tail that
+   hid its own start would let "no such text" pass on lines never seen). It never
+   fails a run by itself -- a library may legitimately chatter -- and the
+   driver's own narration bypasses it.
+
 ## Consequences
 
 - Two lessons from building it: the template's `quit` raced a destroy plus a
