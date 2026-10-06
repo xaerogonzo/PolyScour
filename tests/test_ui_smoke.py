@@ -1027,3 +1027,39 @@ def test_the_polyshield_switch_is_in_settings_and_writes_the_setting(app):
         assert cfg.get("polyshield_path_checks") is before
     finally:
         cfg.set_value("polyshield_path_checks", before)
+
+
+def test_game_mode_builds_a_bounded_number_of_widgets_however_many_processes(app, monkeypatch):
+    """Each CustomTkinter widget is several Windows USER objects (limit 10,000
+    per process); a row per process once spent ~7,500 of them. The cap is
+    stated on screen, and every refused process is still listed with its reason.
+    """
+    from polyscour.gamemode import session as gm
+    from polyscour.gamemode.policy import Candidate
+    from polyscour.views import gamemode_view as gv
+
+    me = "someone"
+    cands = [Candidate(pid=10_000 + i, name=f"app{i}.exe", username=me,
+                       memory_bytes=1_000_000 + i, create_time=1.0)
+             for i in range(gv.MAX_ROWS + 25)]
+    cands += [Candidate(pid=20_000 + i, name="svchost.exe", username=me,
+                        memory_bytes=5, create_time=1.0) for i in range(40)]
+    monkeypatch.setattr(gm, "enumerate_candidates", lambda: cands)
+    monkeypatch.setattr(gv, "veto", lambda c, **kw: (
+        "on the reviewed list of processes that must never be suspended"
+        if c.name == "svchost.exe" else None))
+
+    app.navigate("game")
+    view = app._views["game"]
+    view.refresh()
+    app.update_idletasks()
+
+    assert len(view._rows) == gv.MAX_ROWS            # bounded
+    assert all(not box.get() for box, _ in view._rows)  # nothing pre-ticked
+    texts = [w.cget("text") for w in view.list.winfo_children()
+             if isinstance(w, ctk.CTkLabel)]
+    assert any("25 more suspendable" in t for t in texts)   # the hidden count, said
+    assert any("40 processes PolyScour will not suspend" in t for t in texts)
+    boxes = [w for w in view.list.winfo_children() if isinstance(w, ctk.CTkTextbox)]
+    assert len(boxes) == 1
+    assert boxes[0].get("1.0", "end").count("svchost.exe") == 40   # none dropped
