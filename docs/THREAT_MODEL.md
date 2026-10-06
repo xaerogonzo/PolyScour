@@ -1187,6 +1187,27 @@ cannot tell the listener from PolyShield — the shared secret proves nothing.
 `docs/PRIVACY.md` says so plainly, and PolyShield's own `WINDOWS_SERVICE.md`
 documents the same property on its side.
 
+## The live driver
+
+### T34 — A scripting hook in a program that deletes files
+
+**What could go wrong.** `POLYSCOUR_DRIVE` makes the app execute a script. If it
+were reachable in an installed build, or ran against the real vault, ledger and
+settings, a script (or a stray environment variable) could press buttons on a
+real machine.
+
+**Mitigations.** Inert in a built program (`is_frozen()`); refuses unless
+`POLYSCOUR_DATA_DIR` is set; the launcher sandboxes every directory the app
+could touch; clicks are an allowlist of whole labels with nothing that changes
+the machine on it; there is no real-clean step; unknown keys and steps are
+refused before a window opens; the PolyShield port override exists only inside
+the driver. See [ADR 0016](adr/0016-the-live-driver-runs-inside-the-app-and-only-in-a-sandbox.md).
+
+**What is not covered.** Someone who can set environment variables for a
+*development* checkout and also point `POLYSCOUR_DATA_DIR` at real data can run
+the allowlisted, non-destructive steps against it. That is the same trust
+boundary as running the source tree at all.
+
 ## Non-goals
 
 PolyScour is not an antivirus and does not try to be. It can say an item is

@@ -30,102 +30,9 @@ from polyscour.integrations.polyshield import (UNKNOWN_PATH, PathAdvisor,
                                                PathStatus, describe_path,
                                                path_status)
 
+from _polyshield_fake import PathService   # one copy; see its docstring
+
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows-only product")
-
-
-# ── PolyShield's real logic, verbatim (polyshield_service.py @ ab8c925) ──────
-
-_MAX_QUERY_PATH = 32767
-
-
-def _norm_path(value: str) -> str:
-    p = os.path.normcase(os.path.normpath(value))
-    return p.rstrip("\\/") if len(p) > 3 else p
-
-
-def _is_at_or_under(child: str, parent: str) -> bool:
-    if child == parent:
-        return True
-    return child.startswith(parent.rstrip("\\/") + os.sep)
-
-
-def _path_status(path, watched_folders, events) -> dict:
-    if (not isinstance(path, str) or not path or "\0" in path
-            or len(path) > _MAX_QUERY_PATH):
-        return {"ok": False, "error": "invalid path"}
-    if not os.path.isabs(path):
-        return {"ok": False, "error": "path must be absolute"}
-
-    target = _norm_path(path)
-    watched = any(
-        isinstance(f, str) and f and _is_at_or_under(target, _norm_path(f))
-        for f in (watched_folders or ())
-    )
-    flagged = any(
-        isinstance(e.get("path"), str) and e["path"]
-        and _is_at_or_under(_norm_path(e["path"]), target)
-        for e in events
-    )
-    return {"ok": True, "watched": watched, "flagged": flagged}
-
-
-class PathService:
-    """A localhost service speaking PolyShield's protocol for PATH_STATUS."""
-
-    def __init__(self, *, watched=(), detections=(), reply=None, raw=None,
-                 slow=False):
-        self.watched = list(watched)
-        self.events = [{"path": str(p)} for p in detections]
-        self.reply = reply          # a fixed dict, bypassing the real logic
-        self.raw = raw              # raw bytes to send instead of a reply
-        self.slow = slow
-        self.seen: list[dict] = []
-        self.sock = socket.socket()
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(("127.0.0.1", 0))
-        self.port = self.sock.getsockname()[1]
-        self.sock.listen(8)
-        self._stop = threading.Event()
-        threading.Thread(target=self._serve, daemon=True).start()
-
-    def _serve(self):
-        while not self._stop.is_set():
-            try:
-                conn, _ = self.sock.accept()
-            except OSError:
-                return
-            threading.Thread(target=self._one, args=(conn,), daemon=True).start()
-
-    def _one(self, conn):
-        with conn:
-            try:
-                data = conn.recv(65536)
-                request = json.loads(data.decode().split("\n", 1)[0])
-                self.seen.append(request)
-                if self.slow:
-                    for _ in range(100):
-                        conn.sendall(b"x")
-                        time.sleep(0.2)
-                    return
-                if self.raw is not None:
-                    conn.sendall(self.raw)
-                    return
-                if self.reply is not None:
-                    reply = self.reply
-                else:
-                    reply = _path_status(request.get("path"), self.watched,
-                                         self.events)
-                conn.sendall(json.dumps(reply).encode() + b"\n")
-            except (OSError, ValueError):
-                return
-
-    @property
-    def paths_asked(self):
-        return [r.get("path") for r in self.seen if r.get("cmd") == "PATH_STATUS"]
-
-    def close(self):
-        self._stop.set()
-        self.sock.close()
 
 
 @pytest.fixture
@@ -572,3 +479,64 @@ def test_off_is_the_same_as_polyshield_not_being_there(service, monkeypatch, tmp
     assert len(result.findings) == 20
     assert result.outcomes[0].withheld_by_polyshield == 0
     assert svc.seen == []                                # not one question
+
+
+# ══ the fake is PolyShield's code, and stays so ═══════════════════════════════
+
+_POLYSHIELD_CHECKOUT = Path(r"D:\Random Projects\KicomAI_Project")
+
+
+def _polyshield_source() -> str | None:
+    """PolyShield's merged ``polyshield_service.py``, if this machine has a
+    checkout that knows ``PATH_STATUS``; else None. Read through ``git show`` so a
+    checkout sitting on some other branch is not disturbed."""
+    import subprocess
+    for ref in ("origin/master", "HEAD"):
+        done = subprocess.run(
+            ["git", "-C", str(_POLYSHIELD_CHECKOUT), "show", f"{ref}:polyshield_service.py"],
+            capture_output=True, text=True, encoding="utf-8")
+        if done.returncode == 0 and "_path_status" in done.stdout:
+            return done.stdout
+    return None
+
+
+def test_the_fake_still_matches_polyshields_real_code():
+    """If PolyShield changes what ``flagged`` means, a green suite here would
+    otherwise be a green suite about a fake. Compares the three functions as ASTs
+    with docstrings stripped, so wording and formatting never fail it -- only a
+    change in behaviour does. Skipped, not passed, where there is nothing to
+    compare against (CI, or no checkout)."""
+    import ast
+    import _polyshield_fake
+
+    real = _polyshield_source()
+    if real is None:
+        pytest.skip("no PolyShield checkout with PATH_STATUS on this machine")
+
+    wanted = {"_norm_path", "_is_at_or_under", "_path_status"}
+
+    def shape(source):
+        out = {}
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.FunctionDef) and node.name in wanted:
+                body = node.body
+                if body and isinstance(body[0], ast.Expr) and isinstance(
+                        getattr(body[0], "value", None), ast.Constant) and                         isinstance(body[0].value.value, str):
+                    body = body[1:]
+                out[node.name] = ast.dump(ast.Module(body=body, type_ignores=[]))
+        return out
+
+    ours = shape(Path(_polyshield_fake.__file__).read_text(encoding="utf-8"))
+    theirs = shape(real)
+    assert set(theirs) == wanted, "PolyShield no longer has these functions"
+    assert ours == theirs
+
+
+def test_the_drift_check_can_fail():
+    """Negative control: change one operator in a copy and the comparison sees it."""
+    import ast
+    src = "def _path_status(path):\n    return path == 'a'\n"
+    mutated = "def _path_status(path):\n    return path != 'a'\n"
+    assert ast.dump(ast.parse(src)) != ast.dump(ast.parse(mutated))
+
+

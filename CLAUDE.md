@@ -147,6 +147,12 @@ src/polyscour/
 rules/cleaners/*.json  Data only. Never executable, never authority.
 tools/uishot/         Headless GUI capture — scenes + entry-point wiring.
                       Machinery lives in polybedrock.ui.uishot.
+tools/drive/          Live driver launcher + scenarios: runs a JSON script INSIDE
+                      the real app, sandboxed, no mouse/keyboard (adr/0016, T34).
+                      Exit 0 passed / 1 failed / 2 refused / 3 could not run.
+src/polyscour/drive/  ledger.py (Manager's, byte-pinned, never edit) + driver.py
+                      (allowlisted steps; refuses unsandboxed or frozen).
+                      tests/_polyshield_fake.py is the one shared scripted PolyShield.
 tests/golden/ui/      Recorded expected look. Tracked; artifacts/ is not.
 tests/conftest.py     Makes a REAL UAC prompt, or a REAL supervisor spawn,
                       from the suite fail loudly.
