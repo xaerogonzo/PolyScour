@@ -56,7 +56,7 @@ See [SAFETY.md](SAFETY.md) for the full chain. Structurally:
 |---|---|
 | `safety/policy.py` | `RootFamily`, `Operation`, `Scope`, `PolicyEntry`, `POLICY`. **Code, not data.** Resolves symbolic families to concrete directories. |
 | `safety/reparse.py` | Component-wise reparse inspection *before* canonicalisation; containment; volume check. |
-| `safety/guard.py` | Runs the chain, applies the denylist and exclusions, returns a canonical path. |
+| `safety/guard.py` | Runs the chain, applies the denylist and exclusions, then — if given an advisor — asks PolyShield whether a detection is recorded there. Returns a canonical path. |
 
 Rules never name paths. `rules/cleaners/*.json` names a `RootFamily`; only
 `policy.py` knows what one resolves to.
@@ -722,6 +722,37 @@ because a scheduled run is not a new kind of operation, only a new caller.
 See `docs/adr/0014` for why consent is bound to a digest rather than a rule
 id, and `docs/SAFETY.md` #13 for how this sits alongside the other three
 policy authorities.
+
+## PolyShield awareness
+
+```
+integrations/polyshield.py   the client: four read-only questions; PathAdvisor
+        |                    (per-operation cache, latch, directories-first)
+        +--> safety/guard.py   Guard(advisor=...)._refuse_flagged  -- last link,
+        |        |             can only refuse -> PolyShieldFlagged (a GuardRefusal)
+        |        +--> cleaning/scanner.py   withheld, counted, never offered
+        |        +--> cleaning/executor.py  SkipReason.FLAGGED_BY_POLYSHIELD (benign)
+        |        +--> elevation/helper.py   both of its guards ask too
+        |        +--> scheduling/runner.py  unattended: asks, and logs what it left
+        +--> views/polyshield_notes.py  labels for Storage and Startup rows:
+                                        decoration, with no handle on order or state
+```
+
+Where the advisor is turned on is deliberately a short, visible list --
+`Services`, the scheduled runner, the helper's two guards -- because `Guard()`
+defaults to *no* advisor: a bare guard never opens a socket, which is also what
+keeps every existing test off a PolyShield that happens to be running (and
+`tests/conftest.py` adds a second layer by pointing `PROGRAMDATA` somewhere empty
+for every test).
+
+Threading is unchanged: the guard's questions happen on whichever worker thread
+is scanning or executing, and the read-only screens ask from a single
+`run_off_thread` pass after they have drawn. `Services` holds two advisors --
+`guard`'s and `annotator` -- so a Storage render never shares an answer cache
+with a clean.
+
+The reply, the three outcomes and why `flagged: false` is not a clearance are in
+`docs/adr/0015`; what is and is not covered is `docs/THREAT_MODEL.md` T31-T33.
 
 ## Threading
 

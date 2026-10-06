@@ -70,6 +70,14 @@ def _describe(result) -> list[str]:
     if vanished:
         lines.append(f"{len(vanished):,} were already gone.")
 
+    withheld = _by_reason(result, SkipReason.FLAGGED_BY_POLYSHIELD)
+    if withheld:
+        # Said as a fact about what was done, with no verdict on the files:
+        # PolyScour has no opinion about them, it is deferring to a record
+        # PolyShield holds.
+        lines.append(f"{len(withheld):,} were left alone because PolyShield "
+                     f"has a recorded detection there.")
+
     if result.elevation.requested:
         lines.append(result.elevation.describe())
 
@@ -262,6 +270,19 @@ class CleanView(ctk.CTkFrame):
             self._add_note(row, outcome.rule_id, outcome.abort_reason)
             row += 1
 
+        # Likewise anything withheld from a rule that did run: an offer that
+        # is quietly absent is how a cleaner ends up doing less than it
+        # appears to.
+        for outcome in result.outcomes:
+            n = outcome.withheld_by_polyshield
+            if n:
+                self._add_note(
+                    row, outcome.rule_id,
+                    f"{n:,} item{'s' if n != 1 else ''} left out because "
+                    f"PolyShield has a recorded detection there",
+                    lead="left out")
+                row += 1
+
         self._update_selection()
 
     def _add_group(self, row: int, rule_id: str, recs: list) -> None:
@@ -300,11 +321,12 @@ class CleanView(ctk.CTkFrame):
 
         self._groups.append((var, rule_id, findings))
 
-    def _add_note(self, row: int, rule_id: str, reason: str) -> None:
+    def _add_note(self, row: int, rule_id: str, reason: str,
+                  lead: str = "not scanned") -> None:
         frame = ctk.CTkFrame(self.list, fg_color="transparent")
         frame.grid(row=row, column=0, sticky="ew", pady=2)
         frame.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(frame, text=f"{rule_id} — not scanned: {reason}",
+        ctk.CTkLabel(frame, text=f"{rule_id} — {lead}: {reason}",
                      font=theme.get("small"), anchor="w", justify="left",
                      wraplength=760, text_color=theme.color("dim")).grid(
             row=0, column=0, sticky="ew", padx=(38, 8), pady=4)

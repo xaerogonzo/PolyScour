@@ -11,6 +11,7 @@ The chain, in order, and every link is mandatory::
       -> volume check
       -> global denylist          (independent of any rule)
       -> user exclusions
+      -> PolyShield: a recorded detection here?   (optional; refuse-only)
       -> operation permitted?
       -> authorised
 
@@ -44,6 +45,17 @@ class GuardRefusal(Exception):
     Never benign. Reaching this means either a bug in a rule or scanner, or
     something on the machine actively interfering -- so it is surfaced as a hard
     failure rather than folded in with locked files and missing paths.
+    """
+
+
+class PolyShieldFlagged(GuardRefusal):
+    """PolyShield has a recorded detection at this target, so it is left alone.
+
+    A ``GuardRefusal`` subclass so that anything which does not know about it
+    still refuses -- the safe default -- but the one exception to "never
+    benign" above: this is an expected, deliberate condition, not a bug or an
+    attack, and callers that know about it (the scanner, the executor, the
+    elevated helper) report it as its own benign skip.
     """
 
 
@@ -87,10 +99,17 @@ def _is_within(child: Path, parent: Path) -> bool:
 class Guard:
     """Authorises individual targets. One instance per scan or execution."""
 
-    def __init__(self, exclusions: Iterable[Path] = ()) -> None:
+    def __init__(self, exclusions: Iterable[Path] = (),
+                 advisor=None) -> None:
         self._exclusions = [Path(e).resolve(strict=False) for e in exclusions]
         self._denied = [d.resolve(strict=False) for d in _denied_roots()]
         self._roots: dict[str, list[Path]] = {}
+        #: An optional ``integrations.polyshield.PathAdvisor``. Off unless a
+        #: caller passes one, so a bare ``Guard()`` -- every test, and anything
+        #: that has not decided -- never opens a socket. The places that turn it
+        #: on (``Services``, the scheduled runner, the elevated helper) each do
+        #: so in one visible line.
+        self._advisor = advisor
 
     def begin(self) -> None:
         """Start a fresh operation, re-resolving every root family.
@@ -107,8 +126,13 @@ class Guard:
         -- all of which still run on every single file, every time. The roots
         themselves are directories that ``resolve_family()`` already
         canonicalised.
+
+        The same call starts a fresh PolyShield answer cache, which is what
+        bounds that cache to one operation (see ``PathAdvisor``).
         """
         self._roots.clear()
+        if self._advisor is not None:
+            self._advisor.begin()
 
     def _roots_for(self, rule_id: str) -> list[Path]:
         if rule_id not in self._roots:
@@ -143,6 +167,7 @@ class Guard:
         canonical = self._contained_in_a_permitted_root(rule_id, target, roots)
         self._refuse_denied(canonical)
         self._refuse_excluded(canonical)
+        self._refuse_flagged(canonical, roots)
         return canonical
 
     # ── the links in the chain ───────────────────────────────────────────────
@@ -195,6 +220,32 @@ class Guard:
             if _is_within(canonical, excluded):
                 raise GuardRefusal(
                     f"refusing {canonical}: excluded by the user ({excluded})")
+
+    def _refuse_flagged(self, canonical: Path, roots: list[Path]) -> None:
+        """Leave alone what PolyShield has a recorded detection at.
+
+        Last in the chain, and the only link whose answer comes from outside
+        this process. Three properties are the point of it:
+
+        * **It can only ever refuse.** A reply cannot add to what is permitted:
+          every earlier link has already said yes, and this one may only take
+          it back. That is the same test every input to the elevated helper has
+          to pass -- may narrow, never widen -- and it is why the helper can
+          ask too: something impersonating PolyShield gains, at most, the power
+          to make a clean do less.
+        * **UNKNOWN proceeds.** No PolyShield, a refusal, a malformed reply: all
+          mean the chain's own verdict stands. Only a clear ``flagged: true``
+          changes anything.
+        * **It is not a clearance.** ``flagged: false`` is "no recorded
+          detection" from a capped log. Nothing downstream may read it as safe.
+        """
+        if self._advisor is None:
+            return
+        root = next((r for r in roots if _is_within(canonical, r)), canonical)
+        if self._advisor.flagged_within(root, canonical) is True:
+            raise PolyShieldFlagged(
+                f"leaving {canonical} alone: PolyShield has a recorded "
+                f"detection there")
 
     # ── introspection, for the UI and for diagnostics ────────────────────────
 

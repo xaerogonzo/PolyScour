@@ -889,3 +889,112 @@ def test_cancel_with_nothing_pending_does_nothing(machine_row):
     view, registry, _, _ = machine_row
     view._cancel(registry.items()[0].identity)               # must not raise
     assert view._cancels == {}
+
+
+# ── PolyShield's informational notes: decoration, never advice ───────────────
+
+def _shape(widget):
+    """Every widget under ``widget`` as (class, label text, state), in order --
+    with PolyShield's own note labels split out, so a screen drawn with and
+    without them can be compared on everything *else*."""
+    shape, notes = [], []
+
+    def walk(w):
+        for child in w.winfo_children():
+            if isinstance(child, ctk.CTkLabel):
+                text = child.cget("text")
+                if text.startswith("PolyShield"):
+                    notes.append(text)
+                    continue
+            else:
+                text = None
+            try:
+                state = child.cget("state")
+            except Exception:                  # noqa: BLE001 -- not every widget has one
+                state = None
+            shape.append((type(child).__name__, text, state))
+            walk(child)
+
+    walk(widget)
+    return shape, notes
+
+
+def test_storage_notes_add_labels_and_change_nothing_else(storage, monkeypatch, app):
+    from polyscour.integrations.polyshield import PathAdvisor, PathStatus
+
+    view = _scan(storage, monkeypatch)
+    silent, silent_notes = _shape(view._body)
+    assert silent_notes == []
+
+    games = r"C:\Games"
+    monkeypatch.setattr(app.services, "annotator",
+                        PathAdvisor(lambda p: PathStatus(True, p == games)))
+    view._render(view._report, view._review)
+    noisy, notes = _shape(view._body)
+
+    assert any("recorded detection in or beneath this folder" in n for n in notes)
+    # Everything else -- every row, in the same order, no new control, no changed
+    # state -- is identical. A note is a label and nothing more.
+    assert noisy == silent
+
+
+def test_storage_with_nothing_to_say_is_laid_out_exactly_as_before(
+        storage, monkeypatch, app):
+    """UNKNOWN and "no recorded detection" both leave the screen untouched: no
+    empty label, no extra row."""
+    from polyscour.integrations.polyshield import PathAdvisor, PathStatus
+
+    view = _scan(storage, monkeypatch)
+    before = _shape(view._body)
+
+    for ask in (lambda p: None, lambda p: PathStatus(False, False)):
+        monkeypatch.setattr(app.services, "annotator", PathAdvisor(ask))
+        view._render(view._report, view._review)
+        assert _shape(view._body) == before
+
+
+def test_startup_notes_add_labels_and_change_nothing_else(app, monkeypatch):
+    from polybedrock.startup import RunEntry
+
+    from polyscour.integrations.polyshield import PathAdvisor, PathStatus
+    from polyscour.startup.inventory import (Inventory, InventoryEntry, Source,
+                                             SourceStatus)
+    from polyscour.startup.manager import StartupItem, TargetState
+    from polyscour.views import startup_view
+
+    exe = r"C:\Apps\Tool\tool.exe"
+    item = StartupItem(
+        entry=RunEntry(hive_name="HKCU",
+                       key_path=r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+                       value_name="Tool", raw_value=exe, target_path=exe,
+                       scope="user"),
+        enabled=True, has_approval_record=True, target=TargetState.PRESENT)
+    task_exe = r"C:\Apps\Updater\up.exe"
+    inventory = Inventory(
+        entries=[InventoryEntry(Source.SCHEDULED_TASK, "Updater", "Task Scheduler",
+                                task_exe, task_exe, TargetState.PRESENT, "you",
+                                "enabled")],
+        statuses=[SourceStatus(s) for s in Source])
+
+    monkeypatch.setattr(startup_view, "list_items", lambda: [item])
+    monkeypatch.setattr(startup_view, "read_inventory", lambda: inventory)
+    monkeypatch.setattr(app, "run_off_thread", lambda work, done: (
+        lambda r: done(r, None))(work()))
+
+    def drawn(advisor):
+        monkeypatch.setattr(app.services, "annotator", advisor)
+        view = startup_view.StartupView(app.content, app)
+        try:
+            view.refresh()
+            return _shape(view.list)
+        finally:
+            view.destroy()
+
+    silent, silent_notes = drawn(PathAdvisor(lambda p: None))
+    noisy, notes = drawn(PathAdvisor(
+        lambda p: PathStatus(p == exe, p == task_exe)))
+
+    assert silent_notes == []
+    assert "PolyShield monitors this location" in notes
+    assert "PolyShield has a recorded detection for this file" in notes
+    assert noisy == silent          # same rows, same order, same switch state

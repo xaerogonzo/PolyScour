@@ -44,7 +44,8 @@ from pathlib import Path
 from polyscour.elevation.protocol import (MalformedRequest, Operation, Request,
                                           Response)
 from polyscour.contracts import SkipReason, classify_os_error
-from polyscour.safety.guard import Guard, GuardRefusal
+from polyscour.integrations.polyshield import PathAdvisor
+from polyscour.safety.guard import Guard, GuardRefusal, PolyShieldFlagged
 from polyscour.safety.policy import Operation as PolicyOperation
 from polyscour.safety.policy import PolicyViolation, entry_for, permitted_roots
 
@@ -163,7 +164,9 @@ def _delete_approved_path(params: dict) -> Response:
     rule_id = params["rule_id"]
     target = Path(params["path"])
 
-    guard = Guard()
+    # The advisor can only ever make this refuse more -- see
+    # ``Guard._refuse_flagged`` -- which is why it may be asked from here.
+    guard = Guard(advisor=PathAdvisor())
     guard.begin()
     try:
         # The whole chain: policy lookup, permitted roots, component-wise
@@ -267,7 +270,11 @@ def _delete_approved_paths_for_rule(params: dict, control: _Control) -> Response
     # user's settings, because under `runas` its %LOCALAPPDATA% need not be the
     # same profile. Without them a path the user protected would be honoured
     # unelevated and deleted here.
-    guard = Guard(exclusions=[Path(e) for e in params["exclusions"]])
+    # PolyShield's answer, like an exclusion, can only cause a refusal: it
+    # cannot add to what is deleted, so it passes the "narrow, never widen"
+    # test every input to this process has to. docs/adr/0015.
+    guard = Guard(exclusions=[Path(e) for e in params["exclusions"]],
+                  advisor=PathAdvisor())
     guard.begin()
 
     # The age floor comes from the policy entry, never from the rule file. The
@@ -318,6 +325,9 @@ def _delete_approved_paths_for_rule(params: dict, control: _Control) -> Response
             try:
                 canonical = guard.authorize(rule_id, path,
                                             PolicyOperation.DELETE)
+            except PolyShieldFlagged as exc:
+                note(path, SkipReason.FLAGGED_BY_POLYSHIELD, str(exc))
+                continue
             except GuardRefusal as exc:
                 note(path, SkipReason.REFUSED_BY_GUARD, str(exc))
                 continue

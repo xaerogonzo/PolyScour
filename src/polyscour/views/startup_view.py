@@ -26,6 +26,7 @@ Nothing is pre-selected and nothing is recommended, at either privilege.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 import customtkinter as ctk
 from polybedrock.ui import theme
@@ -35,6 +36,7 @@ from polyscour.startup.inventory import Source, describe, read_inventory
 from polyscour.startup.manager import list_items
 from polyscour.startup.policy import (describe_target,
                                       requires_elevation, veto)
+from polyscour.views.polyshield_notes import annotate
 
 #: Section titles, and the exact mechanism each one reads. Naming the mechanism
 #: is a project rule; "some Windows startup thing" is not an acceptable label.
@@ -92,6 +94,11 @@ class StartupView(ctk.CTkFrame):
         self.list.grid(row=3, column=0, sticky="nsew", padx=20, pady=(0, 4))
         self.list.grid_columnconfigure(0, weight=1)
         self._generation = 0
+        #: Rows waiting for PolyShield's informational note, and which
+        #: drawing of the list they belong to. See views/polyshield_notes.py:
+        #: a note never affects order, state or selection.
+        self._pending_notes: list = []
+        self._notes_epoch = 0
         #: Identities whose administrator request is still in flight, and the
         #: switch drawn for each row, so a row can be locked and unlocked.
         self._pending: set[str] = set()
@@ -105,6 +112,8 @@ class StartupView(ctk.CTkFrame):
         self.refresh()
 
     def refresh(self) -> None:
+        self._notes_epoch += 1
+        self._pending_notes = []
         for child in self.list.winfo_children():
             child.destroy()
         self._switches = {}
@@ -127,6 +136,7 @@ class StartupView(ctk.CTkFrame):
                 text=f"{len(items)} entries, {on} enabled. "
                      f"Machine-wide entries affect every account and ask for "
                      f"administrator rights when you change one.")
+        self._annotate_rows()
         self._load_inventory()
 
     # ── the view-only inventory ──────────────────────────────────────────────
@@ -161,6 +171,7 @@ class StartupView(ctk.CTkFrame):
                    "recommendation.")
         for source, title in _SECTIONS:
             self._render_source(inventory, source, title)
+        self._annotate_rows()
 
     def _section_label(self, text: str) -> None:
         ctk.CTkLabel(self.list, text=text, anchor="w",
@@ -216,6 +227,7 @@ class StartupView(ctk.CTkFrame):
                          font=theme.get("small"),
                          text_color=theme.color("subtext")
                          ).grid(row=0, column=1, rowspan=2, padx=6)
+        self._queue_note(row, entry.target_path, column=0, grid_row=3)
 
     def _render_row(self, it) -> None:
         row = ctk.CTkFrame(self.list, fg_color="transparent")
@@ -271,6 +283,30 @@ class StartupView(ctk.CTkFrame):
             cancel_button.grid_remove()
         self._waiting_parts[it.identity] = (detail_label, detail, cancel_button)
         self._show_waiting(it.identity, it.identity in self._pending)
+        self._queue_note(row, it.entry.target_path, column=1, grid_row=2)
+
+    # ── PolyShield's informational note ──────────────────────────────────────
+
+    def _queue_note(self, row, target_path, *, column: int, grid_row: int) -> None:
+        """Remember a row so it can be labelled later, if there is anything to say.
+
+        Creates nothing now. A label is added only when PolyShield has a fact
+        about the path, so a row with nothing to add looks exactly as it did.
+        """
+        if not target_path:
+            return
+
+        def place(text, row=row):
+            ctk.CTkLabel(row, text=text, anchor="w", font=theme.get("small"),
+                         text_color=theme.color("dim")
+                         ).grid(row=grid_row, column=column, sticky="ew")
+
+        self._pending_notes.append((Path(target_path), False, place))
+
+    def _annotate_rows(self) -> None:
+        pending, self._pending_notes = self._pending_notes, []
+        epoch = self._notes_epoch
+        annotate(self.app, pending, lambda: epoch == self._notes_epoch)
 
     def _toggle(self, it, var) -> None:
         if it.identity in self._pending:

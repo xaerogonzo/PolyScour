@@ -68,6 +68,7 @@ def run(schedule_id: str) -> int:
     from polyscour.cleaning.executor import Executor
     from polyscour.cleaning.planner import plan
     from polyscour.cleaning.scanner import Scanner
+    from polyscour.integrations.polyshield import PathAdvisor
     from polyscour.ledger import Ledger
     from polyscour.safety.guard import Guard
     from polyscour.scheduling import consent, store, task
@@ -99,7 +100,10 @@ def run(schedule_id: str) -> int:
         return 0
 
     exclusions = [Path(p) for p in (cfg.get("exclusions") or [])]
-    guard = Guard(exclusions=exclusions)
+    # Unattended, so PolyShield's say matters more here than anywhere: nobody
+    # is watching to notice a detection being cleaned away. Refuse-only, and
+    # UNKNOWN (no PolyShield) changes nothing.
+    guard = Guard(exclusions=exclusions, advisor=PathAdvisor())
     scanner = Scanner(guard=guard)
     vault = Vault(paths.vault_dir())
     ledger = Ledger(paths.ledger_path())
@@ -120,6 +124,11 @@ def run(schedule_id: str) -> int:
         return 0
 
     scan_result = scanner.scan(runnable_rules, threading.Event())
+    for outcome in scan_result.outcomes:
+        if outcome.withheld_by_polyshield:
+            log.info("%s: %s: left %d item(s) alone -- PolyShield has a "
+                     "recorded detection there", schedule_id,
+                     outcome.rule_id, outcome.withheld_by_polyshield)
     findings = scan_result.findings
     if not findings:
         log.info("%s: nothing found to clean", schedule_id)

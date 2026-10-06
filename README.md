@@ -466,11 +466,45 @@ PolyScour computed itself.
 If it is not, the tile simply does not appear. No greyed-out teaser, no
 advertisement. PolyScour is a complete application on its own, and an
 integration test asserts it behaves identically whether PolyShield is absent,
-present, or installed-but-crashed.
+too old to know the question, answering nonsense, gone, or present with nothing
+to report.
 
-The integration asks exactly two questions — `PING`, and `STATUS` followed by
-`GET_INTEL_STATUS` — over an authenticated local socket, and **fails closed**.
-There is no code path from PolyScour that asks PolyShield to *do* anything.
+### Leaving alone what PolyShield has a detection at
+
+PolyShield records detections. PolyScour cleans the places malware most often
+drops things — temporary folders, browser caches, crash dumps. So before it
+touches a file, PolyScour asks PolyShield whether it has a **recorded detection
+at that path**, and if it does, leaves the file alone: it is not offered in a
+scan, it is refused if a detection is recorded between the scan and the clean,
+and the Clean screen says how many items were left out and why. The same check
+runs in unattended scheduled cleans — where nobody would otherwise notice a
+detection being cleaned away — and in the elevated step that clears
+`C:\Windows\Temp`.
+
+Three things worth knowing about what that does and does not mean:
+
+- **It can only ever make PolyScour do less.** No answer, true or forged, can
+  add a path to what is allowed; every earlier safety check has already said
+  yes, and this one may only take it back.
+- **No PolyShield, no change.** If it is absent, too old, or not answering,
+  PolyScour carries on under its own safety rules exactly as before. It never
+  refuses to clean *because* PolyShield is missing.
+- **"No recorded detection" is not "safe".** PolyShield answers from a capped
+  event log, so a file with no flag has only been *not recorded*. PolyScour
+  never words it as a clearance.
+
+On the Storage and Startup screens a row may carry one dim line — *PolyShield
+monitors this location*, or *has a recorded detection in or beneath this
+folder*. It is a fact, in PolyShield's terms, and nothing else: it does not
+reorder anything, tick anything, move a switch, or suggest what to do, and a
+row PolyShield has nothing to say about is drawn exactly as it always was.
+
+The integration asks four read-only questions — `PING`, `STATUS`,
+`GET_INTEL_STATUS` and `PATH_STATUS` — over a local socket. **`PATH_STATUS`
+carries a path**, to whatever is answering on that port (PolyShield's service,
+when it is running); `docs/PRIVACY.md` and `docs/THREAT_MODEL.md` T33 say what
+that does and does not mean. There is no code path from PolyScour that asks
+PolyShield to *do* anything. `docs/adr/0015` has the design.
 
 ## Architecture
 

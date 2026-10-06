@@ -4,16 +4,36 @@ PolyScour is a complete application without PolyShield. If PolyShield happens
 to be installed and running, one dashboard tile gains real security posture
 instead of being absent. That is the entire relationship in 0.1.
 
-Three questions, and no more
-----------------------------
+Four questions, and no more
+---------------------------
 
     is_available()      PING
     security_posture()  STATUS, GET_INTEL_STATUS
+    path_status(path)   PATH_STATUS      (one path -> watched? flagged?)
 
-Richer capabilities -- a path-level query, hash reputation, shared quarantine --
-get added only when a concrete, committed feature needs them. None of them
-exist on PolyShield's service today, and inventing one now would mean building
-an IPC API before anything consumes it.
+Richer capabilities -- hash reputation, shared quarantine -- get added only
+when a concrete, committed feature needs them. ``PATH_STATUS`` was the first,
+and it was added on PolyShield's side (its PR #35) *before* any code here
+asked for it, shaped by what this side needed: a read-only, string-only answer
+of two booleans, with a malformed request refused rather than answered.
+
+Three outcomes, kept apart
+--------------------------
+
+"Fail closed" meant two different things in earlier drafts of this design, so
+they are named separately:
+
+* **A reply of the wrong shape is rejected.** Something else listening on the
+  port is not a degraded PolyShield (``_send``'s long-standing behaviour).
+* **No reply at all is UNKNOWN** -- not installed, not running, no token.
+* **UNKNOWN grants nothing and blocks nothing.** PolyScour carries on under its
+  own guard chain exactly as it did before PolyShield existed. An optional
+  integration that could stop the cleaner would no longer be optional.
+
+``flagged: False`` is not "safe". PolyShield answers from a capped event log, so
+it means "no recorded detection", and nothing here may word it as a clearance.
+Only ``flagged: True`` ever changes what PolyScour does, and then only by
+doing *less*.
 
 ``security_posture()`` reads only fields ``STATUS`` and ``GET_INTEL_STATUS``
 already return -- confirmed against PolyShield's own handlers
@@ -43,6 +63,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,6 +71,9 @@ _HOST = "127.0.0.1"
 _PORT = 52614
 _CONNECT_TIMEOUT = 0.4      # a closed port on Windows can burn the full timeout
 _CMD_TIMEOUT = 3.0
+#: Far above any real reply (STATUS is a few hundred bytes), far below a
+#: problem. See ``_send``.
+_MAX_REPLY = 64 * 1024
 
 
 def _token_path() -> Path:
@@ -80,28 +104,45 @@ def _read_token() -> str:
         return ""
 
 
-def _send(cmd: str, timeout: float = _CMD_TIMEOUT) -> dict | None:
-    """One command, one response. None for every failure, without distinction.
+def _send(cmd: str, timeout: float = _CMD_TIMEOUT, **fields) -> dict | None:
+    """One command, one response. None for every transport-level failure.
 
     Deliberately undistinguished: "not installed", "not running", "refused us"
-    and "answered nonsense" all mean the same thing to PolyScour, which is
-    that the optional tile does not render. Reporting them differently would
-    invite a caller to treat one of them as a partial yes.
+    and "answered nonsense" all mean the same thing to PolyScour -- UNKNOWN --
+    so reporting them differently would only invite a caller to treat one of
+    them as a partial yes. (``PathAdvisor`` does use the difference between
+    *no reply* and *an unusable reply*, but only to stop asking, never to
+    change what an answer means.)
+
+    ``fields`` are extra request keys. The token and command are set last so a
+    caller cannot override them.
+
+    The reply is bounded in size and in total time. Once a privileged process
+    (the elevated helper) can ask, "whatever is listening on this port" can
+    reach it, and a listener that never sends a newline, or drips one byte at a
+    time, must cost a bounded wait rather than a hung helper or unbounded
+    memory. A per-``recv`` timeout alone resets on every byte.
     """
     token = _read_token()
     if not token:
         return None
-    payload = json.dumps({"cmd": cmd, "token": token}).encode() + b"\n"
+    payload = json.dumps({**fields, "cmd": cmd, "token": token}).encode() + b"\n"
+    deadline = time.monotonic() + timeout
     try:
         with socket.create_connection((_HOST, _PORT), timeout=_CONNECT_TIMEOUT) as s:
             s.sendall(payload)
-            s.settimeout(timeout)
             buf = b""
             while b"\n" not in buf:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                s.settimeout(remaining)
                 chunk = s.recv(4096)
                 if not chunk:
                     break
                 buf += chunk
+                if len(buf) > _MAX_REPLY:
+                    return None
             if not buf:
                 return None
             reply = json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
@@ -200,3 +241,152 @@ def _as_bool(value) -> bool | None:
 
 def _as_int(value) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+# ── PATH_STATUS ──────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class PathStatus:
+    """What PolyShield says about one path. ``None`` is UNKNOWN, never False.
+
+    ``flagged=False`` is deliberately a different thing from ``flagged=None``
+    and from "safe": it means PolyShield answered and has no recorded
+    detection there, from an event log it caps. See the module docstring.
+    """
+    watched: bool | None = None
+    flagged: bool | None = None
+
+
+UNKNOWN_PATH = PathStatus()
+
+
+def _ask_path(path: str) -> PathStatus | None:
+    """One ``PATH_STATUS`` round trip.
+
+    ``None`` means no reply at all (not installed, not running, no token,
+    timed out). ``UNKNOWN_PATH`` means PolyShield *did* reply, but not with a
+    usable answer -- ``ok: false`` (it refuses an empty, relative, NUL-bearing or
+    oversized path rather than guessing) or two values that are not booleans.
+    Both are UNKNOWN to the caller; the difference only tells
+    :class:`PathAdvisor` whether it is worth asking again.
+    """
+    reply = _send("PATH_STATUS", path=path)
+    if reply is None:
+        return None
+    watched, flagged = reply.get("watched"), reply.get("flagged")
+    if (reply.get("ok") is True and isinstance(watched, bool)
+            and isinstance(flagged, bool)):
+        return PathStatus(watched=watched, flagged=flagged)
+    return UNKNOWN_PATH
+
+
+def path_status(path: Path | str) -> PathStatus:
+    """Ask once. Never raises, never caches -- see :class:`PathAdvisor`."""
+    reply = _ask_path(str(path))
+    return UNKNOWN_PATH if reply is None else reply
+
+
+class PathAdvisor:
+    """Asks PolyShield about paths for the length of **one operation**.
+
+    A scan walks tens of thousands of files and the guard looks at every one, so
+    one socket round trip per file is not an option. Two things keep the number
+    of questions small:
+
+    * **A cache that lives exactly one operation.** ``Guard.begin()`` calls
+      :meth:`begin` at the top of every scan and every execution, so an answer
+      never outlives the operation it was asked in. That is what makes a plain
+      path key enough: the one way a path-keyed cache goes stale -- a file at
+      that path deleted and a different one created in its place -- cannot
+      span a scan *and* the delete that follows it, because the delete asks
+      afresh.
+    * **A latch.** The first time PolyShield gives no reply at all, the rest of
+      the operation does not ask again. Without it a machine with no PolyShield
+      would pay a lookup per file for an answer that cannot change mid-scan.
+
+    And :meth:`flagged_within` asks about *directories* before files, which is
+    what keeps the question count proportional to the part of the tree that
+    matters rather than to its size.
+    """
+
+    def __init__(self, ask=None) -> None:
+        #: Injected by tests; ``None`` resolves ``_ask_path`` at call time so
+        #: patching the module attribute works too.
+        self._ask = ask
+        self._cache: dict[str, PathStatus] = {}
+        self._down = False
+        #: Questions actually put to PolyShield since the last ``begin()``.
+        #: Public so a test can assert a scan stayed cheap.
+        self.queries = 0
+
+    def begin(self) -> None:
+        self._cache.clear()
+        self._down = False
+        self.queries = 0
+
+    def status(self, path: Path | str) -> PathStatus:
+        key = os.path.normcase(str(path))
+        hit = self._cache.get(key)
+        if hit is not None:
+            return hit
+        if self._down:
+            return UNKNOWN_PATH
+        self.queries += 1
+        reply = (self._ask or _ask_path)(str(path))
+        if reply is None:
+            self._down = True
+            return UNKNOWN_PATH
+        self._cache[key] = reply
+        return reply
+
+    def flagged_within(self, root: Path, target: Path) -> bool | None:
+        """Whether ``target`` has a recorded detection, asking top-down.
+
+        ``flagged`` means "a detection at this path *or beneath it*", so it is
+        monotonic: a flagged file makes every directory above it flagged. That
+        gives a sound shortcut -- ask about ``root`` first, and if PolyShield
+        says no, nothing below it can be flagged, so one question answers the
+        whole tree. Only along a chain of "yes" answers does the walk continue
+        down towards ``target``.
+
+        ``True``  every level said yes, including ``target`` itself.
+        ``False`` some level said no (so ``target`` is not flagged).
+        ``None``  UNKNOWN at the first level that could not be answered --
+                  which the caller treats as "carry on".
+        """
+        try:
+            relative = target.relative_to(root)
+        except ValueError:
+            chain = [target]
+        else:
+            chain = [root]
+            walked = root
+            for part in relative.parts:
+                walked = walked / part
+                chain.append(walked)
+
+        for level in chain:
+            flagged = self.status(level).flagged
+            if flagged is None:
+                return None
+            if not flagged:
+                return False
+        return True
+
+
+def describe_path(status: PathStatus, *, folder: bool) -> str:
+    """The informational label Storage and Startup show, or "".
+
+    Facts only, in PolyShield's own terms, and nothing that reads as advice:
+    no "suspicious", no "remove", no colour. ``flagged=False`` and UNKNOWN both
+    produce no label at all -- a screen must not say "PolyShield found nothing
+    here" about something it only has a capped log for.
+    """
+    bits: list[str] = []
+    if status.flagged:
+        bits.append("PolyShield has a recorded detection "
+                    + ("in or beneath this folder" if folder
+                       else "for this file"))
+    if status.watched:
+        bits.append("PolyShield monitors this location")
+    return "  ·  ".join(bits)

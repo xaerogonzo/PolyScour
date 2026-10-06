@@ -19,6 +19,7 @@ Only what it needs to do its job, and only while it is doing it:
 | The Run and `RunOnce` registry keys, the Startup folders' listings, and the list of automatic services (name, program path, account) | The Startup screen: what starts with Windows |
 | Every scheduled task's definition, via `schtasks.exe /query /xml` (the program each runs, the account, when it triggers) | The Startup screen's view-only list of tasks that start at logon or boot. Read-only; nothing is stored |
 | Environment variables (`%TEMP%`, `%LOCALAPPDATA%`, `%USERPROFILE%`, …) | To resolve root families and the protected-locations denylist |
+| Two booleans per path from an installed PolyShield (*monitored?* *recorded detection?*) | To leave alone what PolyShield has a detection at, and to label rows on Storage and Startup. Nothing from PolyShield's event log is read or kept beyond those answers |
 
 PolyScour does **not** read file *contents*, except to compute a SHA-256 of a
 file it is about to move into the vault — and that hash never leaves the machine.
@@ -67,9 +68,31 @@ Nothing.
 
 PolyScour makes exactly one kind of network-adjacent call, and it is not
 network: a **loopback** TCP connection to `127.0.0.1:52614`, to ask an installed
-PolyShield three read-only questions. It never leaves the machine, it carries no
-information about your files, and if PolyShield is not installed the connection
-is never attempted.
+PolyShield four read-only questions. It never leaves the machine, and if
+PolyShield is not installed (there is no token file) the connection is never
+attempted.
+
+**One of those questions carries a path.** `PATH_STATUS` asks whether PolyShield
+monitors a location or has a recorded detection at it, so it names an absolute
+path. Which paths:
+
+* while cleaning or scanning: the folders a rule is about to scan, and — only
+  where PolyShield has already said a folder holds a detection — the folders and
+  files along the way to it;
+* on the Storage and Startup screens: the rows that are on screen (12 folders
+  and 12 files at most on Storage; each program a Startup row launches).
+
+Never file contents, never a list of everything PolyScour found. The same
+question is asked from the elevated helper when it clears `C:\Windows\Temp`.
+
+**Who receives it.** Whatever is answering on that port — PolyShield's service
+when it is running. The shared secret is readable by every local account by
+PolyShield's own design, so it does not prove who is listening: a different
+program that bound the port while PolyShield was not running would be sent the
+same questions. That is stated rather than hidden because PolyScour cannot
+close it from inside; the effect of a forged *answer* is limited to PolyScour
+doing less (`docs/THREAT_MODEL.md` T33). You can switch the questions off by
+not installing PolyShield; nothing else in PolyScour needs them.
 
 There is no update check, no rule download, no crash reporter, no analytics, no
 account, and no advertising identifier.
