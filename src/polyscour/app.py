@@ -11,6 +11,7 @@ before it can draw one is slow for no benefit.
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import tkinter
@@ -111,6 +112,15 @@ class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
 
+        # A scripted drive (POLYSCOUR_DRIVE), development only. Imported only
+        # when asked for, and listening from the first moment a root exists so
+        # startup diagnostics are on the record. Refuses, with exit 2, unless
+        # sandboxed -- see polyscour/drive/driver.py.
+        self._driver = None
+        if os.environ.get("POLYSCOUR_DRIVE"):
+            from polyscour.drive import driver as _drive
+            _drive.begin(self)
+
         cfg.load()
         theme.configure(APP_TITLE)
         theme.init(cfg)
@@ -132,6 +142,8 @@ class App(ctk.CTk):
 
         self._build()
         self._navigate("dashboard")
+        if os.environ.get("POLYSCOUR_DRIVE"):
+            self._driver = _drive.start_if_requested(self)   # LAST; keep it
 
     # ── chrome ───────────────────────────────────────────────────────────────
 

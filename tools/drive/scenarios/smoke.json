@@ -1,0 +1,115 @@
+{
+  "visible": false,
+  "steps": [
+    {
+      "do": "expect",
+      "check": "view_active",
+      "view": "dashboard",
+      "within_ms": 3000
+    },
+    {
+      "do": "navigate",
+      "view": "clean"
+    },
+    {
+      "do": "expect",
+      "check": "view_active",
+      "view": "clean",
+      "within_ms": 3000
+    },
+    {
+      "do": "expect",
+      "check": "widget_text",
+      "text": "Nothing scanned yet",
+      "within_ms": 3000
+    },
+    {
+      "do": "navigate",
+      "view": "storage"
+    },
+    {
+      "do": "expect",
+      "check": "view_active",
+      "view": "storage",
+      "within_ms": 3000
+    },
+    {
+      "do": "navigate",
+      "view": "startup"
+    },
+    {
+      "do": "expect",
+      "check": "view_active",
+      "view": "startup",
+      "within_ms": 3000
+    },
+    {
+      "do": "navigate",
+      "view": "uninstall"
+    },
+    {
+      "do": "expect",
+      "check": "view_active",
+      "view": "uninstall",
+      "within_ms": 3000
+    },
+    {
+      "do": "navigate",
+      "view": "history"
+    },
+    {
+      "do": "expect",
+      "check": "view_active",
+      "view": "history",
+      "within_ms": 3000
+    },
+    {
+      "do": "navigate",
+      "view": "settings"
+    },
+    {
+      "do": "expect",
+      "check": "view_active",
+      "view": "settings",
+      "within_ms": 3000
+    },
+    {
+      "do": "expect",
+      "check": "widget_text",
+      "text": "Ask PolyShield about paths",
+      "within_ms": 3000
+    },
+    {
+      "do": "navigate",
+      "view": "game"
+    },
+    {
+      "do": "expect",
+      "check": "view_active",
+      "view": "game",
+      "within_ms": 3000
+    },
+    {
+      "do": "expect",
+      "id": "no traceback reached the console",
+      "check": "no_console_text",
+      "text": "Traceback"
+    },
+    {
+      "do": "expect",
+      "id": "no handle exhaustion reached the console",
+      "check": "no_console_text",
+      "text": "No more menus"
+    },
+    {
+      "do": "expect_clean",
+      "settle_ms": 1500
+    },
+    {
+      "do": "log_report"
+    },
+    {
+      "do": "quit"
+    }
+  ]
+}

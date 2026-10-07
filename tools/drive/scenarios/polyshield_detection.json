@@ -1,0 +1,34 @@
+{
+  "setup": {
+    "temp_files": {"count": 20, "age_days": 3, "subdirs": 4},
+    "polyshield": {"detections": ["d1/f5.tmp"]}
+  },
+  "visible": false,
+  "steps": [
+    {"do": "navigate", "view": "clean"},
+    {"do": "click", "text": "Scan", "view": "clean"},
+
+    {"do": "expect", "id": "scan finished with the detection withheld",
+     "check": "widget_text", "text": "left out because PolyShield has a recorded detection there",
+     "within_ms": 30000},
+    {"do": "expect", "id": "the other nineteen are offered",
+     "check": "widget_text", "text": "19 items", "within_ms": 3000},
+    {"do": "expect", "id": "the withheld file is not counted among them",
+     "check": "no_widget_text", "text": "20 items"},
+
+    {"do": "navigate", "view": "settings"},
+    {"do": "toggle", "text": "Ask PolyShield about paths", "value": false, "view": "settings"},
+    {"do": "expect", "check": "setting", "key": "polyshield_path_checks", "equals": false, "within_ms": 3000},
+
+    {"do": "navigate", "view": "clean"},
+    {"do": "click", "text": "Scan", "view": "clean"},
+    {"do": "expect", "id": "with the switch off all twenty are offered",
+     "check": "widget_text", "text": "20 items", "within_ms": 30000},
+    {"do": "expect", "id": "and nothing is withheld",
+     "check": "no_widget_text", "text": "left out because PolyShield"},
+
+    {"do": "expect_clean", "settle_ms": 1500},
+    {"do": "log_report"},
+    {"do": "quit"}
+  ]
+}
