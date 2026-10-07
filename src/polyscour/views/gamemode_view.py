@@ -9,10 +9,22 @@ opinion about which of your programs you want frozen, and pre-ticking the top
 of a list is a recommendation dressed as a convenience. "Using 2 GB" is not
 evidence that suspending something is a good idea.
 
-**Refused processes are shown, greyed, with the reason.** Hiding them would
-make the policy invisible and leave a user hunting for a program that is not in
-the list. Saying *why* `explorer.exe` cannot be frozen is more useful than
-pretending it does not exist.
+**Refused processes are shown, with the reason.** Hiding them would make the
+policy invisible and leave a user hunting for a program that is not in the
+list. Saying *why* `explorer.exe` cannot be frozen is more useful than
+pretending it does not exist. They are not a row each: they are one summary
+line (how many, and per reason) over a single read-only text box listing every
+one of them with its reason, so nothing is dropped and nothing is a widget.
+
+**The screen's cost in Windows USER objects does not depend on how many
+processes are running.** Every CustomTkinter widget is several USER objects
+and a process may hold at most 10,000; one row per process took the app from
+~200 to ~7,700 on a 529-process machine, and the failure surfaced screens
+later as ``No more menus can be allocated``. So at most ``MAX_ROWS`` selectable
+rows are built, largest memory first, and the rest are *counted aloud* on the
+screen -- a hidden number is stated, never implied to be zero. The cap is a
+rendering limit, not a policy: ``veto()`` still decides what may be frozen, and
+runs again inside ``session.suspend``.
 
 Suspension is a state, not an action
 ------------------------------------
@@ -30,6 +42,10 @@ from polybedrock.ui import theme
 from polyscour.gamemode import session as gm
 from polyscour.gamemode.policy import veto
 from polyscour.formatting import human
+
+
+#: Selectable rows built at once. ~14 USER objects each, so this is ~850.
+MAX_ROWS = 60
 
 
 class GameModeView(ctk.CTkFrame):
@@ -113,8 +129,23 @@ class GameModeView(ctk.CTkFrame):
         self.action.configure(state="normal", text="Suspend selected")
         # Sorted by memory: a fact, shown so a person can judge. Not a ranking
         # of what should be suspended, and nothing arrives ticked.
-        for cand in sorted(candidates, key=lambda c: -c.memory_bytes):
+        ordered = sorted(candidates, key=lambda c: -c.memory_bytes)
+        offered: list = []
+        refused: list[tuple[object, str]] = []
+        for cand in ordered:
+            reason = veto(cand)
+            if reason:
+                refused.append((cand, reason))
+            else:
+                offered.append(cand)
+
+        for cand in offered[:MAX_ROWS]:
             self._render_row(cand)
+        unshown = offered[MAX_ROWS:]
+        if unshown:
+            self._render_unshown(unshown)
+        if refused:
+            self._render_refused(refused)
         self.status.configure(text=f"{len(candidates)} processes")
 
     def _render_row(self, cand) -> None:
@@ -122,28 +153,51 @@ class GameModeView(ctk.CTkFrame):
         row.grid(sticky="ew", padx=6, pady=1)
         row.grid_columnconfigure(1, weight=1)
 
-        refusal = veto(cand)
-        box = ctk.CTkCheckBox(row, text="", width=24,
-                              state="disabled" if refusal else "normal")
+        box = ctk.CTkCheckBox(row, text="", width=24)
         box.grid(row=0, column=0)
-
-        colour = theme.color("subtext") if refusal else theme.color("text")
         ctk.CTkLabel(row, text=cand.display_name, anchor="w",
-                     text_color=colour, font=theme.get("body")
+                     text_color=theme.color("text"), font=theme.get("body")
                      ).grid(row=0, column=1, sticky="ew", padx=6)
         ctk.CTkLabel(row, text=human(cand.memory_bytes), anchor="e",
                      text_color=theme.color("subtext"), font=theme.get("small")
                      ).grid(row=0, column=2, padx=6)
+        self._rows.append((box, cand))
 
-        if refusal:
-            # Shown rather than hidden: an absent row sends the user hunting.
-            ctk.CTkLabel(row, text=refusal, anchor="w",
-                         text_color=theme.color("subtext"),
-                         font=theme.get("small")
-                         ).grid(row=1, column=1, columnspan=2, sticky="ew",
-                                padx=6, pady=(0, 2))
-        else:
-            self._rows.append((box, cand))
+    def _render_unshown(self, unshown) -> None:
+        """Say how many selectable processes have no row, and why.
+
+        The count is the point: a list that silently stops is read as complete.
+        """
+        total = sum(c.memory_bytes for c in unshown)
+        ctk.CTkLabel(
+            self.list, anchor="w", justify="left", wraplength=560,
+            text_color=theme.color("subtext"), font=theme.get("small"),
+            text=f"{len(unshown)} more suspendable processes are not listed "
+                 f"(the smallest by memory, {human(total)} between them). "
+                 f"Showing the {MAX_ROWS} largest."
+        ).grid(sticky="ew", padx=10, pady=(6, 2))
+
+    def _render_refused(self, refused) -> None:
+        """One summary and one text box for every process the policy refuses."""
+        by_reason: dict[str, int] = {}
+        for _cand, reason in refused:
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+        breakdown = "; ".join(f"{n} x {r}" for r, n in
+                              sorted(by_reason.items(), key=lambda kv: -kv[1]))
+        ctk.CTkLabel(
+            self.list, anchor="w", justify="left", wraplength=560,
+            text_color=theme.color("subtext"), font=theme.get("small"),
+            text=f"{len(refused)} processes PolyScour will not suspend: "
+                 f"{breakdown}."
+        ).grid(sticky="ew", padx=10, pady=(10, 2))
+
+        lines = [f"{c.display_name}  {human(c.memory_bytes)}  {reason}"
+                 for c, reason in refused]
+        box = ctk.CTkTextbox(self.list, height=max(48, min(140, 20 + 17 * len(lines))), font=theme.get("small"),
+                             text_color=theme.color("subtext"), wrap="none")
+        box.insert("1.0", chr(10).join(lines))
+        box.configure(state="disabled")
+        box.grid(sticky="ew", padx=6, pady=(0, 6))
 
     def _render_held(self) -> None:
         self.action.configure(state="normal", text="Resume all")

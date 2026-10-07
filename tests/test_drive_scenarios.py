@@ -102,10 +102,6 @@ def test_the_detection_scenario_cannot_pass_without_the_check(tmp_path):
 
 
 @WHOLE_APP_WALK
-@pytest.mark.xfail(strict=True, reason=(
-    "Game Mode builds one row per running process and spends ~7,500 of Windows' "
-    "10,000 USER objects on one machine (found by this driver). Remove this marker "
-    "when that screen's cost is bounded; strict=True makes the fix force it."))
 def test_no_screen_spends_the_per_process_window_budget(tmp_path):
     done, verdict = drive(tmp_path, "handle_budget.json")
     assert done.returncode == 0, done.stdout

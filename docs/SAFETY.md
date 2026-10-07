@@ -244,6 +244,15 @@ what makes the policy hold against a process nobody has heard of.
 list is built, once inside `GameSession.suspend` immediately before the freeze.
 A PID recycled in between is exactly the race the second call is there to lose.
 
+**What the screen shows is bounded; what may be frozen is not changed by that.**
+The list builds at most `MAX_ROWS` selectable rows (largest memory first), and
+says aloud how many suspendable processes have none. Every process the veto
+refuses is listed with its reason in one text box under a summary line, not a
+row each — nothing is dropped, and a refusal is never turned into an omission.
+The cap exists because each widget costs several Windows USER objects (limit
+10,000 per process); it is a rendering limit, not a recommendation, and
+nothing is pre-ticked.
+
 ### Why freezing is recorded before it happens
 
 `NtSuspendProcess` has no timeout and no owner. A suspended process stays
