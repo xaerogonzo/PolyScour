@@ -1,0 +1,9 @@
+{
+  "visible": false,
+  "steps": [
+    {"do": "navigate", "view": "clean"},
+    {"do": "expect", "id": "a screen that does not exist", "check": "widget_text",
+     "text": "this text is nowhere in PolyScour", "within_ms": 800},
+    {"do": "quit"}
+  ]
+}

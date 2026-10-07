@@ -1063,3 +1063,112 @@ def test_game_mode_builds_a_bounded_number_of_widgets_however_many_processes(app
     boxes = [w for w in view.list.winfo_children() if isinstance(w, ctk.CTkTextbox)]
     assert len(boxes) == 1
     assert boxes[0].get("1.0", "end").count("svchost.exe") == 40   # none dropped
+
+# ── the live driver, stepped by hand against the real window ─────────────────
+
+@pytest.fixture
+def drove(app):
+    """A hand-built Driver (no script, so it can never exit the test runner)
+    and a way to run one step and read what the ledger made of it."""
+    from polyscour.drive import ledger as dl
+    from polyscour.drive.driver import Driver
+
+    driver = Driver(app, [])
+    driver._ledger.start_drive()
+
+    def run(**step):
+        driver._steps = [step]
+        driver._index = 0
+        driver.step()                    # arms no timer: a leaked one corrupted a suite once
+        return driver._ledger
+
+    run.driver, run.kinds = driver, dl
+    return run
+
+
+def test_a_drive_step_can_navigate_and_assert_where_it_is(drove, app):
+    drove(do="navigate", view="history")
+    ledger = drove(do="expect", check="view_active", view="history", within_ms=0)
+    assert ledger.passed
+    assert app._active == "history"
+
+
+def test_a_failed_expect_fails_the_run(drove):
+    ledger = drove(do="expect", check="widget_text", text="nowhere in PolyScour", within_ms=0)
+    assert not ledger.passed
+    assert ledger.contains("not satisfied")
+
+
+@pytest.mark.parametrize("label", ["Clean selected", "Run Uninstaller",
+                                   "Retry 3 as administrator", "Remove",
+                                   "Create schedule", "Clear saved scans"])
+def test_a_script_cannot_press_anything_that_changes_the_machine(drove, label):
+    ledger = drove(do="click", text=label)
+    assert not ledger.passed
+    assert ledger.contains("is not something a drive may press")
+
+
+def test_a_label_that_merely_contains_an_allowed_word_is_not_pressed(drove, app):
+    app.navigate("clean")
+    ledger = drove(do="click", text="Scann", view="clean")
+    assert ledger.contains("is not something a drive may press")
+
+
+def test_pressing_a_disabled_button_is_a_failed_step_not_a_silent_no_op(drove, app):
+    app.navigate("clean")
+    # Cancel is disabled until a scan runs; say so here rather than inherit
+    # whatever an earlier test left on this shared window.
+    app.get_view("clean").cancel_btn.configure(state="disabled")
+    ledger = drove(do="click", text="Cancel", view="clean")
+    assert ledger.contains("is disabled")
+
+
+def test_toggle_runs_the_boxs_own_command_and_the_setting_follows(drove, app):
+    from polybedrock import settings as cfg
+
+    before = bool(cfg.get("polyshield_path_checks"))
+    app.navigate("settings")
+    try:
+        ledger = drove(do="toggle", text="Ask PolyShield about paths",
+                       value=not before, view="settings")
+        assert ledger.passed
+        assert cfg.get("polyshield_path_checks") is (not before)
+    finally:
+        cfg.set_value("polyshield_path_checks", before)
+
+
+def test_a_script_cannot_flip_a_box_that_is_not_on_its_list(drove, app):
+    app.navigate("settings")
+    ledger = drove(do="toggle", text="Google Chrome cache — safe, permanent",
+                   value=False, view="settings")
+    assert ledger.contains("is not something a drive may flip")
+
+
+def test_the_user_object_check_can_say_no_and_can_say_yes(drove):
+    assert drove(do="expect", check="user_objects", at_most=10 ** 9, within_ms=0).passed
+    ledger = drove(do="expect", check="user_objects", at_most=1, within_ms=0)
+    assert not ledger.passed
+
+
+def test_a_drive_can_assert_on_what_the_console_received(drove):
+    drove.driver._console.feed("stderr", "something went wrong\n")
+    assert drove(do="expect", check="console_contains", text="went wrong",
+                 stream="stderr", within_ms=0).passed
+
+
+def test_a_console_assertion_can_say_no(drove):
+    """Negative control: a no_console_text over text that IS there fails, and a
+    console_contains over text that is not fails."""
+    drove.driver._console.feed("stdout", "Traceback (most recent call last)\n")
+    ledger = drove(do="expect", check="no_console_text", text="Traceback", within_ms=0)
+    assert not ledger.passed
+
+
+def test_a_console_check_over_absent_text_fails(drove):
+    assert not drove(do="expect", check="console_contains", text="never printed",
+                     within_ms=0).passed
+
+
+def test_an_unknown_console_stream_is_a_failed_step(drove):
+    ledger = drove(do="expect", check="console_contains", text="x", stream="stdin", within_ms=0)
+    assert not ledger.passed and ledger.contains("'stream' must be")

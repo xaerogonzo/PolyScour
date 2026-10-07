@@ -841,6 +841,16 @@ extracted and, more importantly, what was not.
 PolyScour consumes `polybedrock.paths`, `polybedrock.settings`,
 `polybedrock.win_security`, `polybedrock.capabilities` and `polybedrock.ui.theme`.
 
+## Driving the app live
+
+`tools/drive/` runs a JSON scenario **inside** the real app
+(`src/polyscour/drive/`, started from `app.py` only when `POLYSCOUR_DRIVE` is
+set) in a sandbox it builds itself: planted aged temp files and, optionally, a
+scripted PolyShield on a loopback port. It asserts on what the window shows and
+writes an evidence report; the launcher's exit code is the report's verdict.
+Sandbox-only, allowlisted, no real cleans: [ADR 0016](adr/0016-the-live-driver-runs-inside-the-app-and-only-in-a-sandbox.md),
+threat T34.
+
 ## Testing the GUI
 
 `tools/uishot/` photographs every screen with **no visible window, no focus

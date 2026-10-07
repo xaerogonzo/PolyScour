@@ -1,0 +1,17 @@
+{
+  "visible": false,
+  "steps": [
+    {"do": "navigate", "view": "clean"},
+    {"do": "navigate", "view": "storage"},
+    {"do": "navigate", "view": "startup"},
+    {"do": "navigate", "view": "uninstall"},
+    {"do": "navigate", "view": "history"},
+    {"do": "navigate", "view": "settings"},
+    {"do": "expect", "id": "every screen but Game Mode stays well inside the 10,000 USER-object limit",
+     "check": "user_objects", "at_most": 5000, "within_ms": 3000},
+    {"do": "navigate", "view": "game"},
+    {"do": "expect", "id": "and so does Game Mode, however many processes are running",
+     "check": "user_objects", "at_most": 5000, "within_ms": 3000},
+    {"do": "quit"}
+  ]
+}

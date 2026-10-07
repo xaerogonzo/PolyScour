@@ -455,6 +455,19 @@ and confirms that a deliberately corrupted golden is actually *caught*. Run
 `--check` yourself before committing a UI change; that is where it means
 something.
 
+### Driving it live
+
+```powershell
+.\venv\Scripts\python tools\drive\__main__.py tools\drive\scenarios\smoke.json
+```
+
+Runs a scenario inside the real app, in a throwaway sandbox, with no mouse or
+keyboard control, and exits 0 passed / 1 failed / 2 refused / 3 could not run.
+Scenarios may only press an allowlist of harmless buttons; none performs a real
+clean. It can also assert on what the app printed or logged to its console.
+The development tool is inert in an installed build. See
+[docs/adr/0016](docs/adr/0016-the-live-driver-runs-inside-the-app-and-only-in-a-sandbox.md).
+
 ## Optional: PolyShield
 
 If [PolyShield](https://github.com/xaerogonzo/Polyshield-Antivirus) is installed
