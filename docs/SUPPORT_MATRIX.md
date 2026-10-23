@@ -33,6 +33,12 @@ platforms rather than pretending to pass.
 | Startup: view-only list of tasks | `%SystemRoot%\System32\schtasks.exe` | The section says the tasks **could not be read** — not "none found". `System32\Tasks` and the registry `TaskCache` are administrator-only, so `schtasks` is the only unelevated source (adr/0011) |
 | Startup: view-only list of services, folders, `RunOnce` | Nothing beyond the registry and the filesystem | Each source reports its own failure in its own section |
 | Storage: complete totals | Administrator | **Not offered.** Unreadable directories are counted and named; the residual grows and says why. Elevation is not requested to shrink a number |
+| Recycle Bin | `shell32.SHQueryRecycleBinW` / `SHEmptyRecycleBinW` | Not offered on the Clean screen. Never emulated by deleting inside `$Recycle.Bin` (adr/0012) |
+| Uninstall: list | Nothing beyond the registry (`...\Uninstall\*` under HKLM, HKLM WOW6432Node, HKCU) | A hive that cannot be read says so; it is not shown as "nothing installed" |
+| Uninstall: launch | `shell32.CommandLineToArgvW`, to split `UninstallString` | The row's button is **disabled with the reason**. Never launched through a shell instead (adr/0013) |
+| Scheduled cleaning: create / remove | `%SystemRoot%\System32\schtasks.exe` | The schedule is not created, and Settings says why |
+| Scheduled cleaning: run | `powershell.exe`, for `Get-ScheduledTask` — `schtasks /query /xml` corrupts long values | The run is **refused**: a task that cannot be verified is treated as untrusted, not assumed unchanged (adr/0014) |
+| PolyShield path awareness | PolyShield running and answering `PATH_STATUS` | Exactly as if PolyShield were absent: nothing is refused *because* it is missing, and nothing is cleared by its silence (adr/0015) |
 
 ## Capabilities declared today
 
