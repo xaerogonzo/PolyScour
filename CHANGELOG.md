@@ -5,6 +5,8 @@ ADR holds the decision. Backfilled from merge history on 2026-10-23.
 
 ## 0.4.0 — 2026-10-23
 
+- Live-driver scenarios for Uninstall, Settings schedules and the Recycle Bin;
+  a sandboxed drive no longer reads the real Recycle Bin (#40).
 - Game Mode: the screen's USER-object cost is bounded however many processes
   run, and its caps are stated (#39).
 - Live driver: runs a JSON script inside the real app, sandboxed, with no mouse
