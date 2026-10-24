@@ -1,0 +1,21 @@
+{
+  "visible": false,
+  "steps": [
+    {"do": "navigate", "view": "uninstall"},
+    {"do": "expect", "id": "the list of what Windows recorded renders",
+     "check": "widget_text", "text": "programs listed", "within_ms": 20000},
+    {"do": "expect", "id": "SystemComponent entries are counted, not shown",
+     "check": "widget_text", "text": "system components not shown"},
+    {"do": "expect", "id": "each row names the registry key it was read from",
+     "check": "widget_text", "text": "CurrentVersion\\Uninstall\\"},
+    {"do": "expect", "id": "and none of them was started",
+     "check": "no_widget_text", "text": "Launching"},
+    {"do": "expect", "id": "nothing was launched, or failed to",
+     "check": "no_widget_text", "text": "Could not launch"},
+    {"do": "expect", "id": "no traceback reached the console",
+     "check": "no_console_text", "text": "Traceback"},
+    {"do": "expect_clean", "settle_ms": 1500},
+    {"do": "log_report"},
+    {"do": "quit"}
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "setup": {
+    "schedules": [{"rule_ids": ["user-temp"], "time": "04:30", "day_of_week": "SUN"}]
+  },
+  "visible": false,
+  "steps": [
+    {"do": "navigate", "view": "settings"},
+    {"do": "expect", "id": "the planted schedule record is listed",
+     "check": "widget_text", "text": "Every Sun at 04:30 — 1 rule, up to safe risk", "within_ms": 5000},
+    {"do": "expect", "id": "so the empty state is not shown",
+     "check": "no_widget_text", "text": "No schedules yet."},
+    {"do": "expect", "id": "and a new one created",
+     "check": "widget_text", "text": "Create schedule"},
+    {"do": "expect", "id": "no traceback reached the console",
+     "check": "no_console_text", "text": "Traceback"},
+    {"do": "expect_clean", "settle_ms": 1500},
+    {"do": "log_report"},
+    {"do": "quit"}
+  ]
+}

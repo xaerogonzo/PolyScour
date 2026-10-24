@@ -1,0 +1,27 @@
+{
+  "setup": {
+    "recycle_bin": {"items": 3, "bytes": 4096}
+  },
+  "visible": false,
+  "steps": [
+    {"do": "navigate", "view": "clean"},
+    {"do": "click", "text": "Scan", "view": "clean"},
+    {"do": "expect", "id": "the Recycle Bin is offered as its own row",
+     "check": "widget_text", "text": "Recycle Bin on", "within_ms": 30000},
+    {"do": "expect", "id": "the row says it cannot be undone",
+     "check": "widget_text", "text": "This cannot be undone by PolyScour"},
+    {"do": "expect", "id": "and that it is not reversible",
+     "check": "widget_text", "text": "Not reversible"},
+    {"do": "expect", "id": "and why it is not selected for you",
+     "check": "widget_text", "text": "Permanent. Review before selecting."},
+    {"do": "expect", "id": "it is never pre-ticked: nothing is selected",
+     "check": "widget_text", "text": "Nothing selected."},
+    {"do": "expect", "id": "the run stays a dry run",
+     "check": "setting", "key": "default_to_dry_run", "equals": true},
+    {"do": "expect", "id": "no traceback reached the console",
+     "check": "no_console_text", "text": "Traceback"},
+    {"do": "expect_clean", "settle_ms": 1500},
+    {"do": "log_report"},
+    {"do": "quit"}
+  ]
+}
