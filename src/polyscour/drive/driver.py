@@ -22,9 +22,13 @@ template's, and they are the reason this file differs from it:
   no business accepting a script from its environment.
 * **It can only press an allowlist of buttons.** Scanning and previewing; never
   "Clean selected", "Run Uninstaller", "Retry as administrator", "Remove" or
-  "Create schedule". A script that names anything else fails that step. Pressing
+  "Create schedule" -- and so never a typed-confirmation dialog, and never Task
+  Scheduler, which no sandbox redirects. A script that names anything else fails that step. Pressing
   more is a code change that goes through review, not a line in a JSON file --
   "configuration is not authority", applied to the test tool.
+* **The Recycle Bin is the scenario's, not the machine's** (:func:`sandbox_recycle_bin`):
+  the Shell reads the real bin whatever the environment says, so a drive answers
+  for it and refuses to empty it.
 * **A script with a key or a step it does not know is refused before anything
   runs**, not silently ignored. Ignoring an argument means proceeding on the
   overlap between what the author meant and what this understood.
@@ -50,6 +54,8 @@ ENV_SCRIPT = "POLYSCOUR_DRIVE"
 #: Set by ``tools/drive`` when it started a scripted PolyShield. Read here, and
 #: only here, so the production client never grows a port override.
 ENV_POLYSHIELD_PORT = "POLYSCOUR_DRIVE_POLYSHIELD_PORT"
+#: Set by ``tools/drive`` from ``setup.recycle_bin``: ``{"items": n, "bytes": b}``.
+ENV_RECYCLE_BIN = "POLYSCOUR_DRIVE_RECYCLE_BIN"
 
 _LEDGER = None
 _CONSOLE = None
@@ -325,6 +331,7 @@ def start_if_requested(app):
     if port.isdigit():
         from polyscour.integrations import polyshield
         polyshield._PORT = int(port)
+    sandbox_recycle_bin(os.environ.get(ENV_RECYCLE_BIN, ""))
     if scenario.get("visible") is False:
         try:
             app.withdraw()
@@ -334,6 +341,42 @@ def start_if_requested(app):
                     report=scenario.get("report"), console=_CONSOLE)
     driver.start()
     return driver
+
+
+def sandbox_recycle_bin(raw: str) -> None:
+    """Answer for the Recycle Bin from the scenario, and never empty one.
+
+    The bin is the one thing a scan reads that no redirected directory covers:
+    ``SHQueryRecycleBinW`` asks the Shell about the REAL volumes, whatever TEMP or
+    USERPROFILE say. So in a drive both Shell calls are replaced -- ``query`` with
+    the planted answer (on the system drive) or an empty bin, so a scenario sees
+    the same thing on every machine; ``empty`` with a refusal, so no path through
+    the app, reachable today or added later, can empty a real bin from a drive.
+    Narrowing only: this can make a drive see less of the machine and do less.
+    """
+    from polyscour.cleaning import recyclebin
+
+    planted: dict[str, recyclebin.RecycleBinInfo] = {}
+    if raw.strip():
+        try:
+            spec = json.loads(raw)
+            items, size = int(spec["items"]), int(spec["bytes"])
+        except (ValueError, TypeError, KeyError) as exc:
+            raise DriveRefused("%s is not {\"items\": n, \"bytes\": b}: %s"
+                               % (ENV_RECYCLE_BIN, exc))
+        root = os.environ.get("SystemDrive", "C:").rstrip("\\/") + "\\"
+        planted[root.upper()] = recyclebin.RecycleBinInfo(
+            volume=root, items=max(0, items), bytes=max(0, size))
+
+    def query(volume_root: str):
+        return planted.get(str(volume_root).upper(),
+                           recyclebin.RecycleBinInfo(volume=volume_root, items=0, bytes=0))
+
+    def empty(volume_root: str) -> bool:
+        raise PermissionError("a drive never empties a Recycle Bin (%s)" % volume_root)
+
+    recyclebin.query = query
+    recyclebin.empty = empty
 
 
 def user_objects() -> int:

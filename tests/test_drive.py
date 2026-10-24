@@ -145,7 +145,8 @@ def test_without_the_variable_nothing_is_even_considered(monkeypatch):
 
 @pytest.mark.parametrize("label", [
     "Clean selected", "Run Uninstaller", "Retry 3 as administrator", "Remove",
-    "Create schedule", "Clear saved scans", "Save report…", "Cancel the cleanup"])
+    "Create schedule", "Clear saved scans", "Save report…", "Cancel the cleanup",
+    "Empty Recycle Bin", "Launching…"])
 def test_nothing_that_changes_the_machine_is_on_the_allowlist(label):
     assert label.strip().lower() not in driver.CLICKABLE
 
@@ -219,7 +220,76 @@ def test_the_launcher_refuses_a_setup_it_does_not_understand_or_that_escapes(set
 
 def test_a_good_setup_is_accepted():
     assert launcher()._check_setup(
-        {"temp_files": {"count": 3}, "polyshield": {"detections": ["d1/f5.tmp"]}}) is None
+        {"temp_files": {"count": 3}, "polyshield": {"detections": ["d1/f5.tmp"]},
+         "recycle_bin": {"items": 3, "bytes": 4096},
+         "schedules": [{"rule_ids": ["user-temp"], "time": "04:30"}]}) is None
+
+
+@pytest.mark.parametrize("setup", [
+    {"recycle_bin": {"items": 3}}, {"recycle_bin": {"items": -1, "bytes": 0}},
+    {"recycle_bin": {"items": True, "bytes": 0}}, {"recycle_bin": {"items": 1, "bytes": 1, "path": "C:\\"}},
+    {"recycle_bin": []}, {"schedules": {}}, {"schedules": [{"time": "04:30"}]},
+    {"schedules": [{"rule_ids": ["user-temp"], "time": "04:30", "task_name": "\\Microsoft\\x"}]},
+])
+def test_the_launcher_refuses_a_bin_or_schedule_it_does_not_understand(setup):
+    assert launcher()._check_setup(setup) is not None
+
+
+def test_a_planted_schedule_is_a_record_the_store_reads_and_names_no_real_task(tmp_path):
+    from polyscour.scheduling import store
+
+    path = tmp_path / "schedules.json"
+    launcher().plant_schedules(path, [{"rule_ids": ["user-temp"], "time": "04:30",
+                                       "day_of_week": "SUN"}])
+    entry = json.loads(path.read_text(encoding="utf-8"))["schedules"][0]
+    planted = store._from_dict(entry)          # the store's own reader accepts it
+    assert planted.describe().startswith("Every Sun at 04:30")
+    assert "no such task" in planted.task_name
+
+
+def test_the_bin_answer_reaches_the_app_only_when_planted(sandbox):
+    module, box = sandbox
+    assert "POLYSCOUR_DRIVE_RECYCLE_BIN" not in module.child_env(box, None)
+    env = module.child_env(box, None, {"items": 3, "bytes": 4096})
+    assert json.loads(env["POLYSCOUR_DRIVE_RECYCLE_BIN"]) == {"items": 3, "bytes": 4096}
+
+
+# ══ the Recycle Bin: the scenario's, never the machine's ══════════════════════
+
+@pytest.fixture
+def real_bin_calls(monkeypatch):
+    """Restore the Shell calls afterwards, and fail if the real ones run at all."""
+    from polyscour.cleaning import recyclebin
+
+    def real(*_):
+        raise AssertionError("the real Shell was asked")
+    monkeypatch.setattr(recyclebin, "query", real)
+    monkeypatch.setattr(recyclebin, "empty", real)
+    monkeypatch.setenv("SystemDrive", "C:")
+    return recyclebin
+
+
+def test_an_unplanted_bin_is_empty_whatever_the_machine_holds(real_bin_calls):
+    driver.sandbox_recycle_bin("")
+    assert real_bin_calls.query("C:\\").empty
+    assert real_bin_calls.scan().findings == []
+
+
+def test_a_planted_bin_is_answered_on_the_system_drive_only(real_bin_calls):
+    driver.sandbox_recycle_bin('{"items": 3, "bytes": 4096}')
+    assert (real_bin_calls.query("c:\\").items, real_bin_calls.query("C:\\").bytes) == (3, 4096)
+    assert real_bin_calls.query("D:\\").empty
+
+
+def test_a_drive_never_empties_a_bin(real_bin_calls):
+    driver.sandbox_recycle_bin('{"items": 3, "bytes": 4096}')
+    with pytest.raises(PermissionError, match="never empties"):
+        real_bin_calls.empty("C:\\")
+
+
+def test_a_malformed_bin_answer_is_refused(real_bin_calls, capsys):
+    with pytest.raises(driver.DriveRefused):
+        driver.sandbox_recycle_bin('{"items": 3}')
 
 
 # ══ the console channel ═══════════════════════════════════════════════════════

@@ -465,7 +465,28 @@ Runs a scenario inside the real app, in a throwaway sandbox, with no mouse or
 keyboard control, and exits 0 passed / 1 failed / 2 refused / 3 could not run.
 Scenarios may only press an allowlist of harmless buttons; none performs a real
 clean. It can also assert on what the app printed or logged to its console.
-The development tool is inert in an installed build. See
+The development tool is inert in an installed build.
+
+The shipped scenarios, in `tools\drive\scenarios\`:
+
+| Scenario | What it shows |
+|---|---|
+| `smoke.json` | Every screen opens and the app stays quiet |
+| `handle_budget.json` | No screen spends Windows' per-process window budget |
+| `polyshield_detection.json` | A planted PolyShield detection is left out of a real scan; the Settings switch brings it back |
+| `uninstall.json` | The Uninstall list renders from the registry, SystemComponent entries are counted and not shown, nothing is launched |
+| `schedules.json` | A planted schedule record is listed in Settings with its controls |
+| `recycle_bin.json` | A planted Recycle Bin is offered unticked, worded as permanent |
+| `must_fail.json` | The control: a script that cannot pass |
+
+What a drive cannot reach, and why: it never presses **Create schedule**,
+**Remove**, **Run Uninstaller** or **Clean selected** (a test proves each press
+is refused). They sit behind typed confirmations, and the first two act on
+Task Scheduler, which is machine-wide and which no sandbox redirects. So a
+planted schedule is only a record in the sandbox's `schedules.json`; no task
+is created. The Recycle Bin is the scenario's too: the Shell would otherwise
+read this machine's real bin, so a drive answers for it (empty unless planted)
+and refuses to empty one. See
 [docs/adr/0016](docs/adr/0016-the-live-driver-runs-inside-the-app-and-only-in-a-sandbox.md).
 
 ## Optional: PolyShield
