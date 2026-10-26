@@ -1208,6 +1208,39 @@ the driver. See [ADR 0016](adr/0016-the-live-driver-runs-inside-the-app-and-only
 the allowlisted, non-destructive steps against it. That is the same trust
 boundary as running the source tree at all.
 
+## The command line
+
+### T35 — A "read-only" command line that changes the machine, or becomes the way to
+
+**What could go wrong.** Three distinct ways, each of which has a plausible
+innocent implementation:
+
+1. A read that writes. `Ledger.history()` creates the data directory and the
+   database, runs the schema script and migrates old columns; a `history`
+   command built on it would do all of that on a machine that had no ledger,
+   under a banner saying it changes nothing.
+2. A verb that mutates arriving as a small addition to the read-only ones, with
+   a `--yes` flag standing in for the consent a schedule gets once, at creation
+   (adr/0014).
+3. A scan that is quietly a different scan: a rule the person disabled in
+   Settings scanned anyway because the command line named it.
+
+**Mitigations.** `--cli` constructs no executor, vault or elevation client and
+requests no elevation; the only registered verbs are `scan` and `history`.
+`Ledger.history_readonly()` opens the file `mode=ro` and creates and migrates
+nothing; "no ledger", "empty" and "unreadable" are three different outputs.
+`entry.py` matches the flag exactly and `argparse` has abbreviations off. A rule
+disabled in Settings is refused by name. The branch imports no GUI toolkit.
+Tests assert that a real `--cli history` and `--cli scan` through the entry
+point leave an empty data directory empty, and each was watched to fail under a
+deliberate breakage. See [ADR 0017](adr/0017-the-command-line-is-read-only-and-needs-a-console.md).
+
+**What is not covered.** A new verb is a new decision: nothing in the code stops
+someone adding `clean`, only this entry and review. `scan --json` prints paths
+to whatever the caller redirected output to, which is the user's own choice.
+The installed, console-less executable is unsupported for this and exits 3
+without output; what a script sees from it was not measured.
+
 ## Non-goals
 
 PolyScour is not an antivirus and does not try to be. It can say an item is

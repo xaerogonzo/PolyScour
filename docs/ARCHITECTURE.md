@@ -476,6 +476,7 @@ argv --> entry.main()
            |                              (no GUI import happens on this path)
            +-- "--supervise-game-mode" --> import supervisor, run it, exit
            +-- "--scheduled-clean"     --> import scheduling.runner, run it, exit
+           +-- "--cli"                 --> import cli (read-only; scan, history)
            +-- nothing                --> import app, mainloop()
            +-- anything else          --> refuse, exit 2
 ```
@@ -491,6 +492,14 @@ Unknown arguments are refused rather than ignored, and every flag is an exact
 string: `--elevated-helper-x` and `--ELEVATED-HELPER` are unknown arguments,
 with a test each, and the same holds for `--scheduled-clean`. See
 `docs/adr/0006`.
+
+`--cli` is the one branch meant to be typed by a person. It is read-only (`scan`
+and `history`), constructs no executor or vault, and is not a privileged
+process, so it narrows nothing. It builds the Clean screen's scanner itself
+rather than `app.Services`, which imports the GUI and writes on construction,
+and reads the ledger through `Ledger.history_readonly()` because every other
+`Ledger` method creates and migrates the database. Needs a console, so not the
+installed executable (`docs/adr/0017`, threat T35).
 
 ### Frozen and source differ, and the difference is asked once
 

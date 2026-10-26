@@ -3,6 +3,15 @@
 One line per change, newest first. The pull request holds the reasoning; the
 ADR holds the decision. Backfilled from merge history on 2026-10-23.
 
+## Unreleased
+
+- Command line: `--cli scan` and `--cli history`, read-only, with a versioned
+  JSON form and exit codes that never report an unread rule as empty. No
+  `clean` and no `plan`. Needs a console, so not the installed build yet
+  (adr/0017, T35).
+- `Ledger.history_readonly()`: reads the ledger without creating or migrating
+  it. Every other `Ledger` method does both, even for a read.
+
 ## 0.4.0 — 2026-10-23
 
 - Live-driver scenarios for Uninstall, Settings schedules and the Recycle Bin;

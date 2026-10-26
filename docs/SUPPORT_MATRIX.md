@@ -39,6 +39,7 @@ platforms rather than pretending to pass.
 | Scheduled cleaning: create / remove | `%SystemRoot%\System32\schtasks.exe` | The schedule is not created, and Settings says why |
 | Scheduled cleaning: run | `powershell.exe`, for `Get-ScheduledTask` — `schtasks /query /xml` corrupts long values | The run is **refused**: a task that cannot be verified is treated as untrusted, not assumed unchanged (adr/0014) |
 | PolyShield path awareness | PolyShield running and answering `PATH_STATUS` | Exactly as if PolyShield were absent: nothing is refused *because* it is missing, and nothing is cleared by its silence (adr/0015) |
+| Command line (`--cli scan` / `history`) | A console: a source checkout, or a build made with console mode on. The installed build disables it (`build.ps1`) | Exits **3 with no output** — there is no stream to write to. Not measured on a real installed build (adr/0017) |
 
 ## Capabilities declared today
 

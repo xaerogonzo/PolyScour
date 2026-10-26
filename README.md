@@ -199,7 +199,9 @@ the answer is. It is a link, not a claim about what is on your disk.
 
 Driver management, registry cleaning, secure wipe, duplicate finder,
 WinGet updater, browser extension manager, cloud-drive cleaner,
-process explorer, service manager, CLI, portable mode.
+process explorer, service manager, portable mode, and a command line that
+*changes* anything (the one that exists only reads — see
+[Command line](#command-line)).
 
 A duplicate finder is the nearest of these and is still declined: it needs you
 to hand it a folder to search, and every path PolyScour accepts today can only
@@ -349,6 +351,35 @@ programs suspended. **It is not a guarantee.** If something takes PolyScour and
 the supervisor together, the programs stay frozen until PolyScour runs again, or
 until you reboot. Resume-at-next-launch remains the fallback, and that gap is
 described in `docs/THREAT_MODEL.md` T20 rather than papered over here.
+
+## Command line
+
+```powershell
+.\venv\Scripts\python -m polyscour.entry --cli scan            # what Clean would find
+.\venv\Scripts\python -m polyscour.entry --cli scan --list     # ...with every path
+.\venv\Scripts\python -m polyscour.entry --cli scan --json     # for scripts
+.\venv\Scripts\python -m polyscour.entry --cli scan --rule user-temp
+.\venv\Scripts\python -m polyscour.entry --cli history --limit 5
+```
+
+**It only reads.** `scan` is the Clean screen's own scan — same safety guard,
+your exclusions, PolyShield's say, rules you disabled in Settings stay disabled,
+the Recycle Bin included — and it deletes, moves and plans nothing. `history`
+reads the ledger without creating or migrating it, and says "no ledger exists",
+"no operations" and "could not be read" as three different things. There is no
+`clean` and no `plan`: a plan only exists to be executed, and a command that
+changes your machine needs a consent model of its own, not a `--yes` flag
+(`docs/adr/0017`).
+
+Exit codes: `0` everything asked for was read · `1` part of it could not be
+(a rule stopped, a rule file did not load, cancelled — the output says which;
+that rule is never reported as "nothing found") · `2` usage · `3` could not run.
+`--json` carries `"schema": 1`; keys are added, not renamed.
+
+**It needs a console.** The installed build is made without one, so there it
+exits `3` with no output. It works from a source checkout and from a build made
+with console mode on. How the installed program should get one is an open
+decision, recorded in the ADR.
 
 ## Installing it
 
