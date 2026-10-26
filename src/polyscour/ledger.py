@@ -312,6 +312,34 @@ class Ledger:
                 "SELECT * FROM operations ORDER BY started_at DESC LIMIT ?",
                 (limit,)))
 
+    def history_readonly(self, limit: int = 100) -> list[sqlite3.Row] | None:
+        """``history()`` for a caller that must not change the machine.
+
+        ``history()`` is a *read* only in name: every method here goes through
+        ``_conn()``, which creates the directory and the database file, runs the
+        schema script and migrates old columns. A command-line ``history`` built
+        on it would create a ledger on a fresh machine and alter an old one
+        while presenting itself as read-only.
+
+        This opens the file read-only and creates nothing. ``None`` means no
+        ledger exists yet -- "nothing has ever been recorded", which is a
+        different fact from an empty ledger and from one that could not be read
+        (that raises ``sqlite3.Error``; an unreadable ledger is never shown as
+        empty). Rows from a ledger older than the current schema simply lack the
+        newer columns.
+        """
+        if not self.path.is_file():
+            return None
+        conn = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro",
+                               uri=True, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            return list(conn.execute(
+                "SELECT * FROM operations ORDER BY started_at DESC LIMIT ?",
+                (limit,)))
+        finally:
+            conn.close()
+
     def reversals_for(self, operation_id: str) -> list[sqlite3.Row]:
         with self._conn() as conn:
             return list(conn.execute(
