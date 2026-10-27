@@ -51,6 +51,11 @@ imports a GUI toolkit. See `docs/adr/0006`.
 src/polyscour/
 ├── entry.py          Which of the two programs runs. Imports neither at
 │                     module scope. THE COMPILED ENTRY POINT
+├── cli.py            --cli scan|history. READ-ONLY, two verbs, no GUI import.
+│                     Builds the Clean screen's scanner itself (NOT Services:
+│                     that imports the GUI and writes). Unread != empty in the
+│                     exit code. Needs a console, so not the installed exe
+│                     (adr/0017, T35)
 ├── app.py            CTk shell — sidebar nav, lazy view factories, Services
 ├── paths.py          polybedrock.paths shim; app_name="PolyScour", scope="user"
 ├── settings.py       polybedrock.settings shim + PolyScour DEFAULTS
@@ -69,7 +74,9 @@ src/polyscour/
 │   ├── session.py    Record-then-freeze, resume, and startup recovery
 │   └── supervisor.py The second process. Unelevated, waits on a HANDLE to
 │                     its parent, then calls session.recover(). Never a copy
-├── ledger.py         SQLite history + reversals + the cross-process mutation lock
+├── ledger.py         SQLite history + reversals + the cross-process mutation lock.
+│                     EVERY method but history_readonly() creates and migrates the
+│                     database -- a "read" through _conn() is a write
 ├── vault.py          Staged deletion: content-addressed objects + manifests
 ├── cleaning/
 │   ├── rules.py      Load JSON, reconcile against policy (narrow only)

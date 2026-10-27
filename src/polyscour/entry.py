@@ -44,6 +44,10 @@ HELPER_FLAG = "--elevated-helper"
 SUPERVISOR_FLAG = "--supervise-game-mode"
 SCHEDULED_CLEAN_FLAG = "--scheduled-clean"
 CLEANUP_SCHEDULES_FLAG = "--cleanup-scheduled-tasks"
+#: The one flag meant to be typed by a person. What follows it is parsed by
+#: ``polyscour.cli`` (argparse, abbreviations off), after this module has
+#: already matched the flag itself exactly.
+CLI_FLAG = "--cli"
 
 #: Backwards-compatible alias. The name was private when there was one flag.
 _HELPER_FLAG = HELPER_FLAG
@@ -78,8 +82,11 @@ _USAGE = f"""PolyScour — a transparent, evidence-based Windows maintenance sui
   PolyScour.exe {SUPERVISOR_FLAG} <pid> <started>  watch a Game Mode session
   PolyScour.exe {SCHEDULED_CLEAN_FLAG} <schedule-id>   run one scheduled clean
   PolyScour.exe {CLEANUP_SCHEDULES_FLAG}      remove every task PolyScour owns
+  PolyScour.exe {CLI_FLAG} scan|history            read-only; see {CLI_FLAG} --help
 
-None of the latter four is a supported way to run anything by hand.
+None of the four before the last is a supported way to run anything by hand.
+{CLI_FLAG} changes nothing on the machine and needs a console, so it is for a
+source checkout or a console build (docs/adr/0017).
 
 The second is launched by PolyScour through Windows' own administrator prompt:
 the request file names an operation from a closed set, and the elevated process
@@ -130,6 +137,13 @@ def main(argv: list[str] | None = None) -> int:
         # person happens to have named similarly.
         from polyscour.scheduling.cleanup import main as cleanup_main
         return cleanup_main(args[1:])
+
+    if args and args[0] == CLI_FLAG:
+        # GUI-free like every branch above it, and read-only: it constructs no
+        # executor, vault or elevation client. Not a way to run anything
+        # privileged, so there is nothing here to narrow.
+        from polyscour.cli import main as cli_main
+        return cli_main(args[1:])
 
     if args:
         print(f"unknown argument: {args[0]!r}\n", file=sys.stderr)
